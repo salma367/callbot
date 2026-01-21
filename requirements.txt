@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-multipart
+openai-whisper
+torch
+pydub
+ffmpeg-python
+gTTS
+streamlit
+requests
