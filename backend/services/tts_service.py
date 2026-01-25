@@ -6,6 +6,7 @@ OUTPUT_DIR = "demo/tts_outputs"
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+
 class TTSService:
     def synthesize(self, text: str, lang: str = "fr") -> str:
         """
