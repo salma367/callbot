@@ -8,3 +8,6 @@ ffmpeg-python
 gTTS
 streamlit
 requests
+chromadb
+sentence-transformers
+pypdf

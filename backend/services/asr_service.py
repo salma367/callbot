@@ -1,3 +1,4 @@
+from multiprocessing.util import info
 from faster_whisper import WhisperModel
 import math
 
@@ -12,13 +13,14 @@ class ASRService:
         self._last_confidence = 0.0
 
     def transcribe_voice(self, audio_path: str) -> dict:
+
         segments, info = self.model.transcribe(
             audio_path,
             beam_size=5,
             best_of=5,
             temperature=0.0,
             vad_filter=True,
-            vad_parameters=dict(min_silence_duration_ms=300),
+            vad_parameters=dict(min_silence_duration_ms=1000),
         )
 
         text_parts = []
@@ -30,7 +32,8 @@ class ASRService:
                 logprobs.append(segment.avg_logprob)
 
         text = " ".join(text_parts).strip()
-        language = info.language or "unknown"
+        print("ASR output:", text)
+        language = info.language if info and info.language else "fr"
 
         if logprobs:
             avg_logprob = sum(logprobs) / len(logprobs)
