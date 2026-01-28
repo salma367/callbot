@@ -1,12 +1,13 @@
 # backend/main.py
 import os
+from backend.services.llm_service import LLMService
 import uvicorn
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from backend.services.voice_pipeline import VoicePipeline
 from backend.services.session_manager import SessionManager
 from backend.controllers.orchestrator import Orchestrator
-from backend.controllers.CallReport import CallReport
+from backend.models.call_report import CallReport
 from backend.controllers.CallProcessRequest import CallProcessRequest
 from fastapi import APIRouter
 
@@ -24,7 +25,8 @@ app.add_middleware(
 # Global objects
 pipeline = VoicePipeline()
 session_manager = SessionManager()
-orchestrator = Orchestrator()
+llm_service = LLMService()
+orchestrator = Orchestrator(llm_service=llm_service)
 active_calls = {}
 
 # ---------- REST ROUTES ----------

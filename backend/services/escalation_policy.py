@@ -3,29 +3,72 @@
 
 class EscalationPolicy:
     """
-    Determines if a call should be escalated to a human agent.
-    Considers:
-      - Low confidence
-      - Sensitive intent
-      - Too many clarifications
+    AI-first escalation policy:
+    - Rarely escalates under normal circumstances.
+    - Escalates immediately for critical emergencies (life/death, danger, legal).
+    - Allows several clarifications or low-confidence turns before escalation.
     """
 
     def __init__(
         self,
-        confidence_limit: float = 0.6,
+        confidence_limit: float = 0.3,  # very low, rarely triggers immediate escalation
         sensitive_intents: list[str] = None,
-        max_ambiguity: int = 0,
+        max_ambiguity: int = 5,  # allow several clarifications
     ):
         self.confidence_limit = confidence_limit
+        self.max_ambiguity = max_ambiguity
         self.sensitive_intents = sensitive_intents or [
             "CLAIM",
-            "CONTRACT_CANCELLATION",
-            "COMPLAINT",
             "LEGAL_ISSUE",
-            "PRIVATE_INQUIRY",
-            "PERSONAL_DATA",
+            "CONTRACT_CANCELLATION",
         ]
-        self.max_ambiguity = max_ambiguity
+
+        self.sensitive_keywords = [
+            # life-threatening
+            "mort",
+            "assassinat",
+            "tué",
+            "meurtre",
+            "danger",
+            "blessé",
+            "sang",
+            "incendie",
+            "brûler",
+            "feu",
+            "explosion",
+            "accident grave",
+            "urgence",
+            "risque vital",
+            # crime / violence
+            "violence",
+            "attaque",
+            "agression",
+            "kidnapping",
+            "vol",
+            "braquage",
+            "criminel",
+            # health / safety
+            "maladie grave",
+            "infection",
+            "empoisonnement",
+            "choc",
+            "fracture",
+            "accident",
+            # privacy / legal
+            "privé",
+            "confidentiel",
+            "données personnelles",
+            "secret",
+            "litige",
+            "avocat",
+            # extreme cases
+            "arme",
+            "terrorisme",
+            "attaque armée",
+            "menace",
+            "sûreté",
+            "alarme",
+        ]
 
     def should_escalate(
         self,
@@ -33,38 +76,33 @@ class EscalationPolicy:
         intent_name: str,
         ambiguity_count: int = 0,
         user_text: str = "",
-    ) -> tuple[bool, str]:
+    ) -> tuple[str, str]:
         """
+        Determines whether to escalate, ask clarification, or handle automatically.
+
         Returns:
-            (True/False, reason)
+            (decision, reason) where decision is one of:
+                - "ESCALATE"        # escalate to human agent
+                - "ASK_CLARIFICATION"  # ask user to clarify
+                - "AUTO_HANDLED"    # AI can handle directly
         """
+        text_lower = user_text.lower()
 
-        # 1️⃣ Escalate if confidence too low
+        # 1️⃣ Immediate escalation if emergency keywords appear
+        if any(word in text_lower for word in self.sensitive_keywords):
+            return "ESCALATE", "SENSITIVE_TEXT"
+
+        # 2️⃣ Escalate if extremely low confidence after max clarifications
         if global_confidence < self.confidence_limit:
-            return True, "LOW_CONFIDENCE"
+            if ambiguity_count >= self.max_ambiguity:
+                return "ESCALATE", "REPEATED_AMBIGUITY"
+            else:
+                return "ASK_CLARIFICATION", "LOW_CONFIDENCE"
 
-        # 2️⃣ Escalate for sensitive intents
+        # 3️⃣ Escalate for sensitive intents with relevant keywords
         if intent_name.upper() in self.sensitive_intents:
-            return True, "SENSITIVE_INTENT"
+            if any(word in text_lower for word in self.sensitive_keywords):
+                return "ESCALATE", "SENSITIVE_INTENT"
 
-        # 3️⃣ Escalate if too many clarifications
-        if ambiguity_count >= self.max_ambiguity:
-            return True, "REPEATED_AMBIGUITY"
-
-        # 4️⃣ Optional: check raw user text for sensitive keywords
-        sensitive_keywords = [
-            "assassinat",
-            "tué",
-            "meurtre",
-            "menace",
-            "danger",
-            "criminel",
-            "privé",
-            "données personnelles",
-        ]
-        lower_text = user_text.lower()
-        if any(word in lower_text for word in sensitive_keywords):
-            return True, "SENSITIVE_TEXT"
-
-        # Otherwise, handle automatically
-        return False, "AUTO_HANDLED"
+        # 4️⃣ Default: AI handles automatically
+        return "AUTO_HANDLED", "AUTO_HANDLED"

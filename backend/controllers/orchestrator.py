@@ -2,82 +2,103 @@
 
 from backend.services.confidence_manager import ConfidenceManager
 from backend.services.escalation_policy import EscalationPolicy
-from backend.logs.logger import Logger
-from backend.models.agent import Agent
 from backend.controllers.ActionType import ActionType
+from backend.models.agent import Agent
+from backend.logs.logger import Logger
 
-confidence_manager = ConfidenceManager()
-escalation_policy = EscalationPolicy()
 logger = Logger()
+confidence_manager = ConfidenceManager()
+escalation_policy = EscalationPolicy(
+    confidence_limit=0.3
+)  # low threshold for rare escalation
+
+SENSITIVE_INTENTS = ["CLAIM", "LEGAL_ISSUE", "CONTRACT_CANCELLATION"]
 
 
 class Orchestrator:
-    """Central decision-maker for conversational turns."""
+    """AI-first orchestrator: prioritizes AI handling, escalates only if necessary."""
+
+    MAX_CLARIFICATIONS = 2  # maximum AI clarification attempts before escalation
+
+    def __init__(self, llm_service=None):
+        if llm_service is None:
+            raise ValueError("LLMService instance must be provided")
+        self.llm_service = llm_service
 
     def on_call_started(self, call_session):
-        """Log the start of a new call session."""
+        """Log the start of a call session."""
         logger.log_session(
             call_session.call_id, getattr(call_session, "caller_type", "UNKNOWN")
         )
-        print(f"[ORCHESTRATOR] Call started: {call_session.call_id}")
+        print(f"[ORCH] Call started: {call_session.call_id}")
 
-    def process_turn(
-        self,
-        call_session,
-        intent,
-        asr_conf: float,
-        nlu_conf: float,
-        ambiguous: bool = False,
-    ):
-        """Process a single turn of the conversation with detailed debugging."""
+    def process_turn(self, call_session, intent, asr_conf, nlu_conf, ambiguous=False):
+        """Process a single user turn with AI-first logic."""
 
-        # 1️⃣ Compute global confidence
-        global_confidence = confidence_manager.compute_global_confidence(
-            asr_confidence=asr_conf, nlu_confidence=nlu_conf, ambiguous=ambiguous
-        )
-        call_session.global_confidence = global_confidence
-        print(f"[DEBUG ORCH] Global confidence: {global_confidence}")
-
-        logger.log_confidence(
-            session_id=call_session.call_id,
-            asr=asr_conf,
-            nlu=nlu_conf,
-            global_score=global_confidence,
-        )
-
-        # 2️⃣ Determine intent name
-        intent_name = intent.name if intent else "UNKNOWN"
-        call_session.current_intent = intent_name
-        print(
-            f"[DEBUG ORCH] Detected intent: {intent_name} | ASR: {asr_conf}, NLU: {nlu_conf}"
-        )
-
-        # 3️⃣ Decide if escalation is needed
-        user_text = call_session.messages[-1] if call_session.messages else ""
-        escalate, reason = escalation_policy.should_escalate(
-            global_confidence=global_confidence,
-            intent_name=intent_name,
-            ambiguity_count=call_session.clarification_count,
-            user_text=user_text,
-        )
-        print(
-            f"[DEBUG ORCH] Escalation check -> escalate: {escalate}, reason: {reason}"
-        )
-
-        logger.log_decision(
-            session_id=call_session.call_id,
-            decision="ESCALATE" if escalate else "AUTO",
-            reason=reason,
-        )
-
-        # 4️⃣ Handle escalation
-        if escalate:
+        # Detect explicit agent request
+        user_lower = call_session.messages[-1].lower()
+        if any(kw in user_lower for kw in ["agent", "humain", "représentant"]):
             agent = Agent(agent_id="A1", name="Sara", department="Claims")
             call_session.status = "ESCALATED"
             call_session.agent_id = agent.agent_id
             call_session.add_message(f"Call escalated to agent {agent.name}.")
+            return {
+                "decision": ActionType.AGENT.value,
+                "agent": {
+                    "agent_id": agent.agent_id,
+                    "agent_name": agent.name,
+                    "department": agent.department,
+                },
+                "reason": "USER_REQUEST_AGENT",
+                "call_id": call_session.call_id,
+                "escalated_message": f"You have been escalated to agent {agent.name}.",
+            }
+        # 1️⃣ Compute global confidence
+        global_conf = confidence_manager.compute_global_confidence(
+            asr_confidence=asr_conf,
+            nlu_confidence=nlu_conf,
+            ambiguous=ambiguous,
+        )
+        call_session.global_confidence = global_conf
 
-            print(f"[DEBUG ORCH] Action: AGENT | Escalated to {agent.name}")
+        # 2️⃣ Set current intent
+        intent_name = intent.name if intent else "UNKNOWN"
+        call_session.current_intent = intent_name
+
+        print(f"[ORCH] Intent={intent_name}, GlobalConf={global_conf}")
+
+        # 🔚 Handle GOODBYE / explicit call end
+        if intent_name == "GOODBYE":
+            call_session.status = "ENDED"
+            call_session.add_message("Call ended by user.")
+
+            return {
+                "decision": (
+                    ActionType.END_CALL.value
+                    if hasattr(ActionType, "END_CALL")
+                    else ActionType.LLM.value
+                ),
+                "message": "Au revoir ! L'appel est terminé.",
+                "reason": "USER_GOODBYE",
+                "call_id": call_session.call_id,
+            }
+
+        # 3️⃣ Check escalation policy
+        decision, reason = escalation_policy.should_escalate(
+            global_confidence=global_conf,
+            intent_name=intent_name,
+            ambiguity_count=call_session.clarification_count,
+            user_text=call_session.messages[-1] if call_session.messages else "",
+        )
+
+        # 4️⃣ Handle ESCALATE decision
+        if decision == "ESCALATE":
+            agent = Agent(agent_id="A1", name="Sara", department="Claims")
+            call_session.status = "ESCALATED"
+            call_session.agent_id = agent.agent_id
+            call_session.add_message(f"Call escalated to agent {agent.name}.")
+            print(f"[ORCH] Action: AGENT | Escalated to {agent.name}")
+
             return {
                 "decision": ActionType.AGENT.value,
                 "agent": {
@@ -90,33 +111,49 @@ class Orchestrator:
                 "escalated_message": f"You have been escalated to agent {agent.name}.",
             }
 
-        # 5️⃣ Handle clarification (moderate confidence)
-        if 0.4 <= global_confidence < 0.7:
+        # 5️⃣ Handle ASK_CLARIFICATION decision
+        elif decision == "ASK_CLARIFICATION":
             call_session.clarification_count += 1
-            clarification = "Pouvez-vous préciser votre demande ?"
-            call_session.add_message(clarification)
-            print(
-                f"[DEBUG ORCH] Action: CLARIFICATION | Count: {call_session.clarification_count}"
+            clarification_prompt = (
+                "Je n'ai pas bien compris. Pourriez-vous préciser votre demande ?"
             )
+            call_session.add_message(clarification_prompt)
+            print(
+                f"[ORCH] Action: ASK_CLARIFICATION | Count={call_session.clarification_count}"
+            )
+
+            # backward compatible: treat as AUTO_HANDLED for layers expecting False/True
             return {
-                "decision": ActionType.CLARIFICATION.value,
-                "message": clarification,
+                "decision": ActionType.LLM.value,
+                "message": clarification_prompt,
+                "confidence": global_conf,
                 "clarification_count": call_session.clarification_count,
+                "reason": reason,
             }
 
-        # 6️⃣ Otherwise auto-handle
-        response_text = f"Réponse automatique pour l’intent : {intent_name}"
-        call_session.add_message(response_text)
-        print(f"[DEBUG ORCH] Action: AUTO | Response: {response_text}")
+        # 6️⃣ Handle auto-handled calls (AI response)
+        context_text = " ".join(call_session.messages[-5:])
+        llm_response = self.llm_service.generate_response(
+            user_text=call_session.messages[-1],
+            context=context_text,
+            language="fr",
+            intent=intent_name,
+        )
+
+        call_session.add_message(llm_response)
+        print("[ORCH] Action: LLM_RESPONSE")
+
         return {
-            "decision": ActionType.AUTO.value,
-            "response": response_text,
-            "confidence": global_confidence,
+            "decision": ActionType.LLM.value,
+            "message": llm_response,
+            "confidence": global_conf,
+            "clarification_count": call_session.clarification_count,
+            "reason": reason,  # backward compatible
         }
 
     @staticmethod
     def serialize_call_session(call_session):
-        """Return a dict representation of the call session."""
+        """Return dict representation for logging or API."""
         return {
             "call_id": call_session.call_id,
             "client_id": getattr(call_session, "client_id", None),

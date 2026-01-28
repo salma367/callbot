@@ -2,6 +2,6 @@ from enum import Enum
 
 
 class ActionType(str, Enum):
-    AUTO = "AUTO"
+    LLM = "LLM"
     CLARIFICATION = "CLARIFICATION"
     AGENT = "AGENT"

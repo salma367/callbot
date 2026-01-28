@@ -76,7 +76,7 @@ async function startRecording() {
             if (mediaRecorder && mediaRecorder.state === "recording") {
                 mediaRecorder.stop();
             }
-        }, 4000);
+        }, 8000);
 
     } catch (error) {
         console.error("Error starting recording:", error);

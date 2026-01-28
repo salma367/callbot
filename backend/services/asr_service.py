@@ -20,7 +20,7 @@ class ASRService:
             best_of=5,
             temperature=0.0,
             vad_filter=True,
-            vad_parameters=dict(min_silence_duration_ms=1000),
+            vad_parameters=dict(min_silence_duration_ms=3000),
         )
 
         text_parts = []
