@@ -1,6 +1,5 @@
 class Intent:
-    def __init__(self, name: str):
+    def __init__(self, name, entities=None, confidence=None):
         self.name = name
-
-    def __repr__(self):
-        return f"Intent({self.name})"
+        self.entities = entities or []
+        self.confidence = confidence

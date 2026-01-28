@@ -1,19 +1,20 @@
 from typing import Dict
-from .call_session import CallSession
+from backend.models.call_session import CallSession
 
 
 class SessionManager:
     def __init__(self):
         self.sessions: Dict[str, CallSession] = {}
 
-    def create(self) -> CallSession:
-        session = CallSession()
-        self.sessions[session.session_id] = session
+    def create(self, client_id=None) -> CallSession:
+        """Create a new CallSession and store it by call_id."""
+        session = CallSession(client_id=client_id)
+        self.sessions[session.call_id] = session
         return session
 
-    def get(self, session_id: str) -> CallSession:
-        return self.sessions.get(session_id)
+    def get(self, call_id: str) -> CallSession:
+        return self.sessions.get(call_id)
 
-    def clear(self, session_id: str):
-        if session_id in self.sessions:
-            del self.sessions[session_id]
+    def clear(self, call_id: str):
+        if call_id in self.sessions:
+            del self.sessions[call_id]

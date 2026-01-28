@@ -4,38 +4,40 @@
 <head>
     <meta charset="UTF-8" />
     <title>Voice Callbot</title>
-    <style>
-        body {
-            background: #0f172a;
-            color: white;
-            font-family: sans-serif;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-        }
-
-        #callBtn {
-            width: 160px;
-            height: 160px;
-            border-radius: 50%;
-            border: none;
-            font-size: 20px;
-            background: #22c55e;
-            color: black;
-            cursor: pointer;
-        }
-
-        #callBtn.active {
-            background: #ef4444;
-            color: white;
-        }
-    </style>
+    <link rel="stylesheet" href="index.css" />
 </head>
 
 <body>
+    <div class="call-container">
+        <div class="avatar">
+            <div class="pulse"></div>
+            🤖
+        </div>
+        <div class="title">Assistant Vocal Assurance</div>
+        <div id="status" class="status">Cliquez sur le bouton pour démarrer</div>
 
-    <button id="callBtn">START CALL</button>
+        <button id="callBtn" class="call-btn">
+            <span class="label">Start Call</span>
+        </button>
+
+        <div id="decision" class="status"></div>
+        <div id="confidence" class="status"></div>
+        <div id="clarifications" class="status"></div>
+
+        <div id="summary-container" style="display:none;">
+            <h3>Résumé de l'appel</h3>
+            <div id="summary-text"></div>
+        </div>
+
+        <div id="escalation-screen">
+            <h2>Escalation</h2>
+            <p id="agent-info"></p>
+            <p>Call ID: <span id="call-id"></span></p>
+        </div>
+
+        <button id="generate-report" class="call-btn" style="margin-top:10px;">Générer le rapport</button>
+        <pre id="report-output"></pre>
+    </div>
 
     <script src="voice.js"></script>
 </body>

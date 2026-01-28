@@ -1,19 +1,89 @@
+import os
+import requests
+from typing import Optional
+from dotenv import load_dotenv
 from backend.models.intent import Intent
+
+load_dotenv()
 
 
 class NLUService:
+    """
+    NLU Service responsible ONLY for intent detection.
+    Confidence is derived deterministically (no hallucinated scores).
+    """
+
+    INTENT_CONFIDENCE_MAP = {
+        "GREETING": 0.9,
+        "GOODBYE": 0.9,
+        "CLAIM": 0.75,
+        "PAYMENT": 0.75,
+        "COVERAGE": 0.75,
+        "PROBLEM": 0.6,
+        "INQUIRY": 0.6,
+        "UNKNOWN": 0.2,
+    }
+
+    def __init__(self, model: str = "llama-3.3-70b-versatile"):
+        self.api_key = os.getenv("GROQ_API_KEY")
+        if not self.api_key:
+            raise EnvironmentError("Please set GROQ_API_KEY environment variable")
+
+        self.model = model
+        self.endpoint = "https://api.groq.com/openai/v1/chat/completions"
+
+        self.intent_labels = list(self.INTENT_CONFIDENCE_MAP.keys())
+
     def detect_intent(self, text: str) -> Intent:
-        t = text.lower()
+        """
+        Uses Groq API to classify the intent of a user utterance.
 
-        if any(w in t for w in ["hello", "hi", "hey", "bonjour", "salut"]):
-            return Intent(name="GREETING")
+        Returns:
+            Intent(name: str, confidence: float)
+        """
 
-        if any(
-            w in t for w in ["problem", "issue", "lost", "stolen", "help", "broken"]
-        ):
-            return Intent(name="PROBLEM")
+        text = text.strip()
+        if not text:
+            return Intent(name="UNKNOWN", confidence=0.2)
 
-        if any(w in t for w in ["bye", "goodbye", "thanks", "thank you"]):
-            return Intent(name="GOODBYE")
+        prompt = f"""
+Classify the following user message into ONE of these intents:
+{', '.join(self.intent_labels)}.
 
-        return Intent(name="UNKNOWN")
+Respond with ONLY the intent name, no explanation.
+
+Message:
+"{text}"
+"""
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": "You are an intent classification AI."},
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": 10,
+            "temperature": 0.0,
+        }
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            response = requests.post(
+                self.endpoint, json=payload, headers=headers, timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+            predicted_intent = data["choices"][0]["message"]["content"].strip().upper()
+        except Exception:
+            predicted_intent = "UNKNOWN"
+
+        if predicted_intent not in self.intent_labels:
+            predicted_intent = "UNKNOWN"
+
+        confidence = self.INTENT_CONFIDENCE_MAP.get(predicted_intent, 0.5)
+
+        return Intent(name=predicted_intent, confidence=confidence)

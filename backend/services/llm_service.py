@@ -21,9 +21,15 @@ class LLMService:
         language: str = "fr",
         intent: Optional[str] = None,
     ) -> str:
+        """
+        RAG-aware LLM call.
+        The assistant MUST answer using provided context when available,
+        but also use the detected intent as a hint for style or focus.
+        """
 
-        context = context.strip() if context else None
+        context = context.strip() if context else "Aucun contexte fourni"
         use_context = "Oui" if context else "Non"
+        intent_hint = intent or "Aucun"
 
         prompt = f"""
     Vous êtes un assistant vocal professionnel pour l'assurance.
@@ -31,12 +37,13 @@ class LLMService:
     Instructions:
     - Si vous avez un contexte fourni, répondez en utilisant ce contexte.
     - Si le contexte est insuffisant, répondez en utilisant vos connaissances générales sur l'assurance.
+    - Utilisez le type d'intention détecté pour guider votre réponse: {intent_hint}.
     - Réponse concise : 1 à 2 phrases maximum.
     - Pas d'exemples, pas d'explications, restez sur le sujet.
 
     Contexte disponible ? {use_context}
     Contexte:
-    {context or 'Aucun contexte fourni'}
+    {context}
 
     Question de l'utilisateur:
     "{user_text}"
@@ -68,7 +75,7 @@ class LLMService:
             data = response.json()
             text = data["choices"][0]["message"]["content"].strip()
         except Exception as e:
-            print(f"❌ LLM call failed: {e}")
+            print(f"LLM call failed: {e}")
             return "Je suis désolé, je n'ai pas pu générer de réponse."
 
         sentences = text.split(".")

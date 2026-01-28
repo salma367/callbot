@@ -1,85 +1,107 @@
-from fastapi import FastAPI, UploadFile, File, Form, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
-import shutil
+# backend/main.py
 import os
-from dotenv import load_dotenv
+import uvicorn
+from fastapi import FastAPI, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
 from backend.services.voice_pipeline import VoicePipeline
 from backend.services.session_manager import SessionManager
-from backend.utils.audio_utils import normalize_for_asr
-from backend.websockets.voice_ws import voice_ws_endpoint  # make sure this exists
+from backend.controllers.orchestrator import Orchestrator
+from backend.controllers.CallReport import CallReport
+from backend.controllers.CallProcessRequest import CallProcessRequest
+from fastapi import APIRouter
 
-# ---------------------- App & Globals ----------------------
-app = FastAPI()
-load_dotenv()
-# Allow frontend on different port to connect
+# Create FastAPI app
+app = FastAPI(title="Callbot AI")
+
+# CORS for frontend testing
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8001"],  # frontend URL
+    allow_origins=["*"],  # replace with frontend URL in production
     allow_methods=["*"],
     allow_headers=["*"],
-    allow_credentials=True,
 )
 
-pipeline = VoicePipeline()  # global models load once
+# Global objects
+pipeline = VoicePipeline()
 session_manager = SessionManager()
+orchestrator = Orchestrator()
+active_calls = {}
 
-TEMP_DIR = "temp"
-os.makedirs(TEMP_DIR, exist_ok=True)
+# ---------- REST ROUTES ----------
+
+router = APIRouter(prefix="/call", tags=["Call"])
 
 
-# ---------------------- HTTP Endpoints ----------------------
-@app.post("/call/voice/start")
-def start_call():
-    session = session_manager.create()
-    greeting_text = (
-        "Salut je suis votre assistant vocal. "
-        "Quand j'ai fini de parler, vous pouvez parler."
+@router.get("/start")
+def start_call(client_id: str | None = None):
+    call_session = session_manager.create(client_id)
+    orchestrator.on_call_started(call_session)
+    active_calls[call_session.call_id] = call_session
+    return {"call_id": call_session.call_id, "message": "Call started"}
+
+
+@router.post("/process")
+def process_call(request: CallProcessRequest):
+    call_session = active_calls.get(request.call_id)
+    if not call_session:
+        return {"error": "Call session not found"}
+
+    # Example: ASR/NLU confidence (in a real setup you get these from ASR/NLU)
+    asr_conf = 0.9
+    nlu_conf = 0.8
+
+    response = orchestrator.process_turn2(
+        call_session,
+        intent=None,  # replace with actual Intent object
+        asr_conf=asr_conf,
+        nlu_conf=nlu_conf,
     )
-    tts_audio = pipeline.tts.synthesize(text=greeting_text, lang="fr")
-    session.log_turn("AI", greeting_text, tts_audio)
+
     return {
-        "session_id": session.session_id,
-        "text": greeting_text,
-        "audio_response": tts_audio,
-        "is_ai_turn": True,
+        "call_session": Orchestrator.serialize_call_session(call_session),
+        "response": response,
     }
 
 
-@app.post("/call/voice/stream")
-def voice_stream(session_id: str = Form(...), audio: UploadFile = File(...)):
-    session = session_manager.get(session_id)
-    if not session:
-        return {"error": "invalid_session"}
+@router.get("/end")
+def end_call(call_id: str):
+    call_session = active_calls.get(call_id)
+    if not call_session:
+        return {"error": "Call session not found"}
 
-    temp_file = os.path.join(TEMP_DIR, f"{session_id}_{audio.filename}")
-    with open(temp_file, "wb") as f:
-        shutil.copyfileobj(audio.file, f)
-
-    normalize_for_asr(temp_file, temp_file)  # optional
-
-    result = pipeline.process_audio(temp_file)
-    session.log_turn("User", result["text"])
-    session.log_turn("AI", result["response_text"], result["audio_response"])
+    call_session.end()
+    # Compute average confidence
+    avg_conf = call_session.get_average_confidence()
+    call_session.average_confidence = avg_conf
+    report = CallReport(call_session)
+    report.final_decision = call_session.final_decision
+    report.average_confidence = avg_conf
+    summary = report.generateSummary()
+    # Remove session from active calls
+    active_calls.pop(call_id, None)
 
     return {
-        "text": result["text"],
-        "response_text": result["response_text"],
-        "audio_response": result["audio_response"],
-        "is_ai_turn": True,
+        "call_session": Orchestrator.serialize_call_session(call_session),
+        "summary": summary,
     }
 
 
-@app.post("/call/voice/end")
-def end_call(session_id: str = Form(...)):
-    session_manager.clear(session_id)
-    return {"status": "ended"}
+app.include_router(router)
+
+# ---------- WebSocket ROUTE ----------
+
+from fastapi import WebSocketDisconnect
+from backend.websockets.voice_ws import voice_ws_endpoint
 
 
-# ---------------------- WebSocket Endpoint ----------------------
 @app.websocket("/ws/voice")
 async def websocket_endpoint(ws: WebSocket):
-    await ws.accept()
-    try:
-        await voice_ws_endpoint(ws, pipeline, session_manager, TEMP_DIR)
-    except WebSocketDisconnect:
-        print("Client disconnected")
+    await voice_ws_endpoint(
+        ws=ws, pipeline=pipeline, session_manager=session_manager, temp_dir="temp"
+    )
+
+
+# ---------- START SERVER ----------
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
