@@ -35,37 +35,18 @@ submitUserBtn.onclick = async () => {
     userName = document.getElementById("fullName").value.trim();
     userPhone = document.getElementById("phoneNumber").value.trim();
 
-    // ---------- Basic validation ----------
-    if (!userName || !userPhone) {
-        alert("Veuillez remplir votre nom et numéro !");
-        return;
-    }
+    if (!userName || !userPhone) { alert("Veuillez remplir votre nom et numéro !"); return; }
+    if (userName.length > 50) { alert("Votre nom est trop long (max 50 caractères)."); return; }
 
-    // Name length check (e.g., max 50 chars)
-    if (userName.length > 50) {
-        alert("Votre nom est trop long (max 50 caractères).");
-        return;
-    }
-
-    // Phone format check: +212 followed by 9 digits
     const phoneRegex = /^\+212\s?\d{9}$/;
-    if (!phoneRegex.test(userPhone)) {
-        alert('Le numéro doit être au format "+212 123456789".');
-        return;
-    }
+    if (!phoneRegex.test(userPhone)) { alert('Le numéro doit être au format "+212 123456789".'); return; }
 
-    // Optional: remove spaces in phone
     userPhone = userPhone.replace(/\s/g, "");
 
-    // ---------- Send to backend ----------
     try {
         const res = await fetch(`http://localhost:8000/call/start?user_name=${encodeURIComponent(userName)}&phone_number=${encodeURIComponent(userPhone)}`);
         const data = await res.json();
-
-        if (data.error) {
-            alert(data.error);
-            return;
-        }
+        if (data.error) { alert(data.error); return; }
 
         sessionId = data.call_id;
         clientId = data.client_id;
@@ -80,6 +61,7 @@ submitUserBtn.onclick = async () => {
         alert("Impossible de contacter le serveur. Vérifiez qu'il est en cours d'exécution.");
     }
 };
+
 // ---------- Audio playback ----------
 function playAIAudio(mp3Bytes, callback = null) {
     if (stopAudio) return;
@@ -103,7 +85,7 @@ function playAIAudio(mp3Bytes, callback = null) {
 
 // ---------- Recording ----------
 async function startRecording() {
-    if (isRecording || !isCallActive || stopAudio) return;
+    if (isRecording || !isCallActive || stopAudio || !ws || ws.readyState !== WebSocket.OPEN) return;
 
     try {
         if (stream) stream.getTracks().forEach(track => track.stop());
@@ -135,29 +117,41 @@ async function startRecording() {
     }
 }
 
-// ---------- Stop recording ----------
-function endRecordingAndCall() {
+// ---------- End call ----------
+function endCall({ keepEscalationUI = false } = {}) {
+    if (!isCallActive) return;
+    console.log("[DEBUG] Ending call");
+
     stopAudio = true;
 
     if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
-    if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-        stream = null;
-    }
+    if (stream) { stream.getTracks().forEach(track => track.stop()); stream = null; }
     isRecording = false;
 
-    if (ws) {
-        ws.close();
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        try { ws.send(JSON.stringify({ event: "end_call" })); }
+        catch (e) { console.warn("Failed to notify backend:", e); }
+        try { ws.close(); } catch (e) { }
         ws = null;
     }
-}
 
+    isCallActive = false;
+    callBtn.classList.remove("active");
+    avatar.classList.remove("active");
+    callBtn.querySelector(".label").textContent = "Start Call";
+    statusText.textContent = "Call ended";
+
+    decisionText.textContent = "";
+    confidenceText.textContent = "";
+    clarificationText.textContent = "";
+    summaryContainer.style.display = "none";
+
+    // Only hide escalation screen if not keeping it
+    if (!keepEscalationUI) escalationScreen.style.display = "none";
+}
 // ---------- WebSocket ----------
 function startCall() {
-    if (!sessionId) {
-        alert("Veuillez d'abord valider vos informations !");
-        return;
-    }
+    if (!sessionId) { alert("Veuillez d'abord valider vos informations !"); return; }
 
     stopAudio = false;
     clarificationCount = 0;
@@ -165,9 +159,9 @@ function startCall() {
 
     escalationScreen.style.display = "none";
     summaryContainer.style.display = "none";
-    if (decisionText) decisionText.textContent = "";
-    if (confidenceText) confidenceText.textContent = "";
-    if (clarificationText) clarificationText.textContent = "";
+    decisionText.textContent = "";
+    confidenceText.textContent = "";
+    clarificationText.textContent = "";
 
     ws = new WebSocket("ws://localhost:8000/ws/voice");
     ws.binaryType = "arraybuffer";
@@ -189,11 +183,35 @@ function startCall() {
     };
 
     ws.onmessage = (event) => {
-        // Handle string messages
         if (typeof event.data === "string") {
             const msg = JSON.parse(event.data);
+
+            // Keep sessionId updated
             if (msg.call_id) sessionId = msg.call_id;
 
+            // ---------- Escalation handling ----------
+            if (msg.decision === "AGENT" && msg.agent) {
+                stopAudio = true; // Prevent further recording/playback
+
+                const ttsMessage = "Votre demande est trop complexe. Vous allez être transféré à un agent humain.";
+
+                if (msg.audio_response) {
+                    // If backend sent TTS audio, play it
+                    playAIAudio(msg.audio_response, () => showEscalationScreen(msg));
+                } else {
+                    // Otherwise, use browser SpeechSynthesis
+                    const utterance = new SpeechSynthesisUtterance(ttsMessage);
+                    utterance.lang = "fr-FR";
+                    utterance.onend = () => showEscalationScreen(msg);
+                    speechSynthesis.speak(utterance);
+                }
+
+                // End call but keep escalation UI visible
+                endCall({ keepEscalationUI: true });
+                return;
+            }
+
+            // ---------- Handle AI turn done ----------
             if (msg.event === "ai_done") {
                 if (msg.decision) decisionText.textContent = `Decision: ${msg.decision}`;
                 if (msg.confidence !== undefined) confidenceText.textContent = `Confidence: ${msg.confidence}`;
@@ -201,23 +219,31 @@ function startCall() {
                     clarificationCount = msg.clarification_count;
                     clarificationText.textContent = `Clarifications: ${clarificationCount}`;
                 }
+
+                // ---------- Handle user goodbye ----------
+                if (msg.reason && msg.reason === "USER_GOODBYE") {
+                    statusText.textContent = "Call ended by user.";
+                    summaryContainer.style.display = "block";
+                    endCall();
+                    return;
+                }
+
+                // ---------- Normal AI turn: start recording ----------
                 if (isCallActive && !stopAudio) setTimeout(startRecording, 500);
             }
+
             return;
         }
 
+        // ---------- Binary audio ----------
         if (!stopAudio && isCallActive) playAIAudio(event.data);
     };
-
     ws.onclose = () => endCall();
     ws.onerror = (error) => { console.error(error); statusText.textContent = "Connection error"; endCall(); };
 }
 
 // ---------- Buttons ----------
-callBtn.onclick = () => {
-    if (!isCallActive) startCall();
-    else endCall();
-};
+callBtn.onclick = () => { if (!isCallActive) startCall(); else endCall(); };
 
 generateReportBtn.onclick = () => {
     if (sessionId) {
