@@ -8,7 +8,16 @@
 </head>
 
 <body>
-    <div class="call-container">
+    <!-- Pre-call user registration form -->
+    <div id="user-form" class="call-container">
+        <div class="title">Entrez vos informations</div>
+        <input type="text" id="fullName" placeholder="Nom complet" />
+        <input type="text" id="phoneNumber" placeholder="Numéro de téléphone" />
+        <button id="submitUser" class="call-btn">Valider</button>
+    </div>
+
+    <!-- Main call UI (hidden until user submits info) -->
+    <div id="call-container" class="call-container" style="display:none;">
         <div class="avatar">
             <div class="pulse"></div>
             🤖

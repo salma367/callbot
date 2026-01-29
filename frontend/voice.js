@@ -1,3 +1,7 @@
+// ---------- DOM Elements ----------
+const userForm = document.getElementById("user-form");
+const submitUserBtn = document.getElementById("submitUser");
+const callContainer = document.getElementById("call-container");
 const callBtn = document.getElementById("callBtn");
 const statusText = document.getElementById("status");
 const decisionText = document.getElementById("decision");
@@ -19,10 +23,63 @@ let audioChunks = [];
 let isCallActive = false;
 let isRecording = false;
 let sessionId = null;
+let clientId = null;
+let userName = null;
+let userPhone = null;
 let clarificationCount = 0;
 let stopAudio = false;
 let stream = null;
 
+// ---------- Pre-call Registration ----------
+submitUserBtn.onclick = async () => {
+    userName = document.getElementById("fullName").value.trim();
+    userPhone = document.getElementById("phoneNumber").value.trim();
+
+    // ---------- Basic validation ----------
+    if (!userName || !userPhone) {
+        alert("Veuillez remplir votre nom et numéro !");
+        return;
+    }
+
+    // Name length check (e.g., max 50 chars)
+    if (userName.length > 50) {
+        alert("Votre nom est trop long (max 50 caractères).");
+        return;
+    }
+
+    // Phone format check: +212 followed by 9 digits
+    const phoneRegex = /^\+212\s?\d{9}$/;
+    if (!phoneRegex.test(userPhone)) {
+        alert('Le numéro doit être au format "+212 123456789".');
+        return;
+    }
+
+    // Optional: remove spaces in phone
+    userPhone = userPhone.replace(/\s/g, "");
+
+    // ---------- Send to backend ----------
+    try {
+        const res = await fetch(`http://localhost:8000/call/start?user_name=${encodeURIComponent(userName)}&phone_number=${encodeURIComponent(userPhone)}`);
+        const data = await res.json();
+
+        if (data.error) {
+            alert(data.error);
+            return;
+        }
+
+        sessionId = data.call_id;
+        clientId = data.client_id;
+
+        console.log("Call started:", data);
+
+        userForm.style.display = "none";
+        callContainer.style.display = "block";
+        statusText.textContent = "Cliquez sur Start Call pour commencer l'appel";
+    } catch (err) {
+        console.error("Error starting call:", err);
+        alert("Impossible de contacter le serveur. Vérifiez qu'il est en cours d'exécution.");
+    }
+};
 // ---------- Audio playback ----------
 function playAIAudio(mp3Bytes, callback = null) {
     if (stopAudio) return;
@@ -49,10 +106,7 @@ async function startRecording() {
     if (isRecording || !isCallActive || stopAudio) return;
 
     try {
-        if (stream) {
-            stream.getTracks().forEach(track => track.stop());
-        }
-
+        if (stream) stream.getTracks().forEach(track => track.stop());
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         mediaRecorder = new MediaRecorder(stream);
         audioChunks = [];
@@ -71,11 +125,8 @@ async function startRecording() {
         };
 
         mediaRecorder.start();
-
         setTimeout(() => {
-            if (mediaRecorder && mediaRecorder.state === "recording") {
-                mediaRecorder.stop();
-            }
+            if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
         }, 8000);
 
     } catch (error) {
@@ -84,7 +135,7 @@ async function startRecording() {
     }
 }
 
-// ---------- Stop recording + call ----------
+// ---------- Stop recording ----------
 function endRecordingAndCall() {
     stopAudio = true;
 
@@ -101,42 +152,14 @@ function endRecordingAndCall() {
     }
 }
 
-// ---------- Show escalation screen ----------
-function showEscalationScreen(msg) {
-    statusText.textContent = "Transferred to agent";
-    escalationScreen.style.display = "block";
-    agentInfo.textContent = `${msg.agent.agent_name} (${msg.agent.department})`;
-    callIdSpan.textContent = sessionId;
-
-    if (decisionText) decisionText.textContent = `Decision: ${msg.decision}`;
-    callBtn.style.display = "none";
-    summaryContainer.style.display = "none";
-}
-
-// ---------- Call end ----------
-function endCall() {
-    endRecordingAndCall();
-
-    callBtn.classList.remove("active");
-    avatar.classList.remove("active");
-    callBtn.querySelector(".label").textContent = "Start Call";
-    statusText.textContent = "Call ended";
-    callBtn.style.display = "block";
-
-    if (sessionId && !stopAudio) {
-        fetch(`http://localhost:8000/call/end?call_id=${sessionId}`)
-            .then(res => res.json())
-            .then(data => {
-                summaryContainer.style.display = "block";
-                summaryText.textContent = data.summary || "No summary available";
-            });
-    }
-}
-
 // ---------- WebSocket ----------
 function startCall() {
+    if (!sessionId) {
+        alert("Veuillez d'abord valider vos informations !");
+        return;
+    }
+
     stopAudio = false;
-    sessionId = null;
     clarificationCount = 0;
     isCallActive = false;
 
@@ -156,35 +179,21 @@ function startCall() {
         avatar.classList.add("active");
         callBtn.querySelector(".label").textContent = "End Call";
         statusText.textContent = "Connected, waiting for AI...";
+
+        ws.send(JSON.stringify({
+            event: "register_client",
+            client_id: clientId,
+            user_name: userName,
+            phone_number: userPhone
+        }));
     };
 
     ws.onmessage = (event) => {
+        // Handle string messages
         if (typeof event.data === "string") {
             const msg = JSON.parse(event.data);
-
             if (msg.call_id) sessionId = msg.call_id;
 
-            // ---------- Escalation handling ----------
-            if (msg.decision === "AGENT" && msg.agent) {
-                stopAudio = true;
-
-                // Play French escalation message first
-                const ttsMessage = "Votre demande est trop complexe. Vous allez être transféré à un agent humain.";
-                if (msg.audio_response) {
-                    // If backend sent TTS, play it
-                    playAIAudio(msg.audio_response, () => showEscalationScreen(msg));
-                } else {
-                    // Otherwise, use our local message (optional: send to backend TTS)
-                    const utterance = new SpeechSynthesisUtterance(ttsMessage);
-                    utterance.lang = "fr-FR";
-                    utterance.onend = () => showEscalationScreen(msg);
-                    speechSynthesis.speak(utterance);
-                }
-                endRecordingAndCall();
-                return;
-            }
-
-            // ---------- Standard AI turn completion ----------
             if (msg.event === "ai_done") {
                 if (msg.decision) decisionText.textContent = `Decision: ${msg.decision}`;
                 if (msg.confidence !== undefined) confidenceText.textContent = `Confidence: ${msg.confidence}`;
@@ -194,11 +203,9 @@ function startCall() {
                 }
                 if (isCallActive && !stopAudio) setTimeout(startRecording, 500);
             }
-
             return;
         }
 
-        // ---------- Binary audio ----------
         if (!stopAudio && isCallActive) playAIAudio(event.data);
     };
 
@@ -206,16 +213,15 @@ function startCall() {
     ws.onerror = (error) => { console.error(error); statusText.textContent = "Connection error"; endCall(); };
 }
 
-// ---------- Button ----------
+// ---------- Buttons ----------
 callBtn.onclick = () => {
     if (!isCallActive) startCall();
     else endCall();
 };
 
-// ---------- Generate report ----------
 generateReportBtn.onclick = () => {
     if (sessionId) {
-        reportOutput.textContent = `Report for Call ID ${sessionId}:\n\n`;
+        reportOutput.textContent = `Report for Call ID ${sessionId} (Client: ${userName}, Phone: ${userPhone}, ID: ${clientId}):\n\n`;
         reportOutput.textContent += `Agent: ${agentInfo.textContent}\n`;
         reportOutput.textContent += `Decision: Escalated\n`;
         reportOutput.textContent += `Reason: Customer needs human assistance\n`;

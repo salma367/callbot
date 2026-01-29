@@ -4,9 +4,13 @@ import uuid
 
 
 class CallSession:
-    def __init__(self, call_id, client_id, agent_id=None):
+    def __init__(
+        self, call_id, client_id, user_name=None, phone_number=None, agent_id=None
+    ):
         self.call_id = call_id or str(uuid.uuid4())
         self.client_id = client_id
+        self.user_name = user_name or "UNKNOWN"
+        self.phone_number = phone_number or "UNKNOWN"
         self.agent_id = agent_id
         self.messages = []
         self.status = "ONGOING"  # ONGOING, ESCALATED, RESOLVED

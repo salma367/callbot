@@ -56,9 +56,37 @@ async def voice_ws_endpoint(
     temp_dir: str,
 ):
     await ws.accept()
-    session: CallSession = session_manager.create()
-    state = VoiceWSState(session.call_id)
-    print(f"[WS] Connection accepted | call_id={session.call_id}")
+    session = None
+    state = None
+    user_name = "FrontEnd User"
+    phone_number = "000000000"
+
+    # --- Wait for client registration ---
+    while session is None:
+        try:
+            message = await ws.receive()
+        except WebSocketDisconnect:
+            print("[WS] Client disconnected before registration")
+            return
+
+        if "text" in message:
+            try:
+                payload = json.loads(message["text"])
+            except Exception:
+                continue
+
+            if payload.get("event") == "register_client":
+                user_name = payload.get("user_name", "FrontEnd User")
+                phone_number = payload.get("phone_number", "000000000")
+
+                # --- Create call session (SessionManager handles client_id internally) ---
+                session = session_manager.create(
+                    user_name=user_name,
+                    phone_number=phone_number,
+                )
+                state = VoiceWSState(session.call_id)
+                print(f"[WS] Connection accepted | call_id={session.call_id}")
+                break
 
     try:
         # --- Initial greeting ---
@@ -143,6 +171,7 @@ async def voice_ws_endpoint(
                 session.end_call(status="ENDED")
                 finalize_call(session)
                 break
+
             # --- Escalation handling ---
             if turn_result.get("decision") == "AGENT":
                 print("[WS] Escalation detected -> ending call")
