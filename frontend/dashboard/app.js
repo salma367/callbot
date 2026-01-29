@@ -1,0 +1,422 @@
+// ============================================
+// API CONFIGURATION
+// ============================================
+
+const API_BASE_URL = 'http://127.0.0.1:5000/api/calls';
+
+// Icon mapping for KPI cards
+const kpiIcons = {
+    phone: '📞',
+    check: '✓',
+    clock: '⏱',
+    alert: '⚠',
+    chart: '📈'
+};
+
+// Global data storage
+let allCalls = [];
+let currentData = [];
+
+// ============================================
+// UTILITY FUNCTIONS (Define first)
+// ============================================
+
+function convertToCSV(data) {
+    const headers = ['Call ID', 'Client', 'Phone', 'Agent', 'Status', 'Confidence', 'Clarifications', 'Summary', 'Start Time', 'End Time'];
+    const rows = data.map(call => [
+        call.call_id || '',
+        call.user_name || '',
+        call.phone_number || '',
+        call.agent_name || '',
+        call.status || '',
+        call.confidence || 0,
+        call.clarification_count || 0,
+        call.summary || '',
+        call.start_time || '',
+        call.end_time || ''
+    ]);
+
+    return [
+        headers.join(','),
+        ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+    ].join('\n');
+}
+
+function downloadCSV(csv, filename) {
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+}
+
+function generateSummary() {
+    const total = currentData.length;
+    const solved = currentData.filter(c => c.status && c.status.toLowerCase() === 'solved').length;
+    const active = currentData.filter(c => c.status && c.status.toLowerCase() === 'active').length;
+    const escalated = currentData.filter(c => c.status && c.status.toLowerCase() === 'escalated').length;
+    const avgConf = total ? Math.round(currentData.reduce((sum, c) => sum + (c.confidence || 0), 0) / total) : 0;
+    const resolutionRate = total ? Math.round((solved / total) * 100) : 0;
+
+    const summary = `
+CALL CENTER SUMMARY REPORT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 Overview
+├─ Total Calls: ${total}
+├─ Solved: ${solved} (${resolutionRate}%)
+├─ Active: ${active}
+├─ Escalated: ${escalated}
+└─ Avg Confidence: ${avgConf}%
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Showing ${currentData.length} of ${allCalls.length} total calls
+Generated: ${new Date().toLocaleString()}
+    `.trim();
+
+    alert(summary);
+}
+
+function showError(message) {
+    const tbody = document.querySelector('#calls-table tbody');
+    tbody.innerHTML = `
+        <tr>
+            <td colspan="9" style="text-align: center; padding: 40px; color: var(--text-muted);">
+                ⚠️ ${message}
+            </td>
+        </tr>
+    `;
+}
+
+function getConfidenceClass(confidence) {
+    if (confidence >= 80) return 'conf-high';
+    if (confidence >= 60) return 'conf-medium';
+    return 'conf-low';
+}
+
+function formatTime(startTime, endTime) {
+    if (!startTime) return { date: 'N/A', timeRange: 'N/A' };
+
+    try {
+        // Handle various date formats
+        const start = new Date(startTime);
+
+        // Check if date is valid
+        if (isNaN(start.getTime())) {
+            return { date: startTime, timeRange: endTime || '' };
+        }
+
+        const date = start.toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric'
+        });
+
+        const startTimeStr = start.toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+        });
+
+        let timeRange = startTimeStr;
+        if (endTime) {
+            const end = new Date(endTime);
+            if (!isNaN(end.getTime())) {
+                const endTimeStr = end.toLocaleTimeString('en-US', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false
+                });
+                timeRange = `${startTimeStr} - ${endTimeStr}`;
+            }
+        }
+
+        return { date, timeRange };
+    } catch (e) {
+        console.error('Date parsing error:', e);
+        return { date: startTime, timeRange: endTime || '' };
+    }
+}
+
+// ============================================
+// LOAD CALLS FROM API
+// ============================================
+
+async function loadCalls(searchQuery = '') {
+    try {
+        console.log('Fetching calls from:', API_BASE_URL);
+        const res = await fetch(API_BASE_URL);
+
+        if (!res.ok) {
+            throw new Error(`HTTP error! status: ${res.status}`);
+        }
+
+        const calls = await res.json();
+        console.log('Loaded calls:', calls.length);
+
+        allCalls = calls;
+
+        // Filter if search query provided
+        if (searchQuery) {
+            const q = searchQuery.toLowerCase();
+            currentData = calls.filter(c =>
+                (c.call_id && String(c.call_id).toLowerCase().includes(q)) ||
+                (c.user_name && String(c.user_name).toLowerCase().includes(q)) ||
+                (c.agent_name && String(c.agent_name).toLowerCase().includes(q)) ||
+                (c.status && String(c.status).toLowerCase().includes(q)) ||
+                (c.summary && String(c.summary).toLowerCase().includes(q))
+            );
+        } else {
+            currentData = calls;
+        }
+
+        renderKPIs(currentData);
+        renderTable(currentData);
+
+    } catch (err) {
+        console.error('Failed to load calls:', err);
+        showError(`Failed to load call data: ${err.message}. Please check if the Flask server is running.`);
+    }
+}
+
+// ============================================
+// RENDER KPI CARDS
+// ============================================
+
+function renderKPIs(calls) {
+    const kpiRow = document.getElementById('kpi-row');
+
+    const total = calls.length;
+    const solved = calls.filter(c => c.status && c.status.toLowerCase() === 'solved').length;
+    const active = calls.filter(c => c.status && c.status.toLowerCase() === 'active').length;
+    const escalated = calls.filter(c => c.status && c.status.toLowerCase() === 'escalated').length;
+    const avgConf = total ? Math.round(calls.reduce((sum, c) => sum + (c.confidence || 0), 0) / total) : 0;
+    const resolutionRate = total ? Math.round((solved / total) * 100) : 0;
+
+    const kpiCards = [
+        {
+            label: 'TOTAL CALLS',
+            number: total,
+            icon: kpiIcons.phone
+        },
+        {
+            label: 'SOLVED',
+            number: solved,
+            subtext: `${resolutionRate}% resolution`,
+            icon: kpiIcons.check
+        },
+        {
+            label: 'ACTIVE',
+            number: active,
+            icon: kpiIcons.clock
+        },
+        {
+            label: 'ESCALATED',
+            number: escalated,
+            icon: kpiIcons.alert
+        },
+        {
+            label: 'AVG CONFIDENCE',
+            number: `${avgConf}%`,
+            icon: kpiIcons.chart
+        }
+    ];
+
+    kpiRow.innerHTML = kpiCards.map(kpi => `
+        <div class="kpi-card">
+            <div class="kpi-content">
+                <div class="kpi-label">${kpi.label}</div>
+                <div class="kpi-number">${kpi.number}</div>
+                ${kpi.subtext ? `<div class="kpi-subtext">${kpi.subtext}</div>` : ''}
+            </div>
+            <div class="kpi-icon">${kpi.icon}</div>
+        </div>
+    `).join('');
+}
+
+// ============================================
+// RENDER TABLE
+// ============================================
+
+function renderTable(calls) {
+    const tbody = document.querySelector('#calls-table tbody');
+    const currentCount = document.getElementById('current-count');
+    const totalCount = document.getElementById('total-count');
+
+    if (calls.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="9" style="text-align: center; padding: 40px; color: var(--text-muted);">
+                    No calls found matching your search criteria.
+                </td>
+            </tr>
+        `;
+        currentCount.textContent = '0';
+        totalCount.textContent = allCalls.length;
+        return;
+    }
+
+    tbody.innerHTML = calls.map(call => {
+        const statusClass = call.status ? call.status.toLowerCase() : 'pending';
+        const confidence = call.confidence || 0;
+        const { date, timeRange } = formatTime(call.start_time, call.end_time);
+
+        // Extract agent role from agent_name if it contains a hyphen or dash
+        let agentName = call.agent_name || 'Unknown';
+        let agentRole = '';
+        if (agentName.includes(' - ')) {
+            const parts = agentName.split(' - ');
+            agentName = parts[0];
+            agentRole = parts[1];
+        } else if (agentName.includes(' – ')) {
+            const parts = agentName.split(' – ');
+            agentName = parts[0];
+            agentRole = parts[1];
+        }
+
+        return `
+            <tr>
+                <td>${call.call_id || 'N/A'}</td>
+                <td>
+                    <div class="cell-person">
+                        <div class="cell-person-name">${call.user_name || 'Unknown'}</div>
+                    </div>
+                </td>
+                <td><span class="cell-phone">${call.phone_number || 'N/A'}</span></td>
+                <td>
+                    <div class="cell-person">
+                        <div class="cell-person-name">${agentName}</div>
+                        ${agentRole ? `<div class="cell-person-role">${agentRole}</div>` : ''}
+                    </div>
+                </td>
+                <td>
+                    <span class="status-pill status-${statusClass}">
+                        ${call.status || 'pending'}
+                    </span>
+                </td>
+                <td>
+                    <div class="conf-wrapper">
+                        <div class="conf-bar">
+                            <div class="conf-bar-fill ${getConfidenceClass(confidence)}" 
+                                 style="width: ${confidence}%">
+                            </div>
+                        </div>
+                        <div class="conf-text">${confidence}%</div>
+                    </div>
+                </td>
+                <td><span class="cell-clarifications">${call.clarification_count || 0}</span></td>
+                <td><span class="cell-decision">${call.summary || 'No summary'}</span></td>
+                <td>
+                    <div class="cell-time">${date}<br>${timeRange}</div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    currentCount.textContent = calls.length;
+    totalCount.textContent = allCalls.length;
+}
+
+// ============================================
+// SEARCH FUNCTIONALITY
+// ============================================
+
+function handleSearch() {
+    const query = document.getElementById('search-input').value;
+    loadCalls(query);
+}
+
+// ============================================
+// EVENT LISTENERS
+// ============================================
+
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('DOM loaded, initializing dashboard...');
+
+    // Initial load
+    loadCalls();
+
+    // Search input with debounce
+    const searchInput = document.getElementById('search-input');
+    let searchTimeout;
+    searchInput.addEventListener('input', (e) => {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+            handleSearch();
+        }, 300); // Debounce 300ms
+    });
+
+    // Search on Enter key
+    searchInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            handleSearch();
+        }
+    });
+
+    // Filter button
+    const filterBtn = document.getElementById('filter-btn');
+    filterBtn.addEventListener('click', () => {
+        console.log('Filter button clicked');
+        handleSearch();
+    });
+
+    // Refresh button
+    const refreshBtn = document.getElementById('refresh-btn');
+    refreshBtn.addEventListener('click', () => {
+        console.log('Refresh button clicked');
+        const originalText = refreshBtn.innerHTML;
+        refreshBtn.innerHTML = '⟳ Refreshing...';
+        refreshBtn.disabled = true;
+
+        loadCalls().finally(() => {
+            refreshBtn.innerHTML = originalText;
+            refreshBtn.disabled = false;
+        });
+    });
+
+    // Export CSV button
+    const exportBtn = document.getElementById('export-btn');
+    exportBtn.addEventListener('click', () => {
+        console.log('Export button clicked, exporting', currentData.length, 'calls');
+
+        if (currentData.length === 0) {
+            alert('No data to export!');
+            return;
+        }
+
+        try {
+            const csv = convertToCSV(currentData);
+            const timestamp = new Date().toISOString().slice(0, 10);
+            downloadCSV(csv, `call-center-data-${timestamp}.csv`);
+
+            const originalText = exportBtn.innerHTML;
+            exportBtn.innerHTML = '✓ Exported!';
+            setTimeout(() => {
+                exportBtn.innerHTML = originalText;
+            }, 2000);
+        } catch (error) {
+            console.error('Export error:', error);
+            alert('Failed to export CSV: ' + error.message);
+        }
+    });
+
+    // Generate Summary button
+    const summaryBtn = document.getElementById('summary-btn');
+    summaryBtn.addEventListener('click', () => {
+        console.log('Summary button clicked');
+
+        if (currentData.length === 0) {
+            alert('No data to summarize!');
+            return;
+        }
+
+        generateSummary();
+    });
+
+    console.log('All event listeners attached successfully');
+});
