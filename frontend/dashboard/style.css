@@ -42,6 +42,14 @@ FONTS & BASE
     --status-pending-border: #fbbf24;
     --status-pending-text: #fbbf24;
 
+    --status-resolved-bg: rgba(74, 222, 128, 0.15);
+    --status-resolved-border: #4ade80;
+    --status-resolved-text: #4ade80;
+
+    --status-ended-bg: rgba(251, 191, 36, 0.15);
+    --status-ended-border: #fbbf24;
+    --status-ended-text: #fbbf24;
+
     /* Border & Effects */
     --border-color: rgba(75, 85, 99, 0.3);
     --border-subtle: rgba(75, 85, 99, 0.15);
@@ -220,6 +228,13 @@ KPI ROW
     flex-shrink: 0;
 }
 
+.kpi-icon img {
+    width: 28px;
+    height: 28px;
+    filter: grayscale(100%) brightness(0.7);
+    object-fit: contain;
+}
+
 .kpi-card:nth-child(1) .kpi-icon {
     background: rgba(34, 211, 238, 0.1);
     color: var(--accent-cyan);
@@ -297,7 +312,7 @@ SEARCH & FILTERS
 }
 
 .filter-btn::before {
-    content: '⚡';
+    content: '';
     font-size: 16px;
 }
 
@@ -535,6 +550,26 @@ TABLE
 
 .status-pending::before {
     background: var(--status-pending-border);
+}
+
+.status-resolved {
+    background: var(--status-resolved-bg);
+    color: var(--status-resolved-text);
+    border-color: var(--status-resolved-border);
+}
+
+.status-resolved::before {
+    background: var(--status-resolved-border);
+}
+
+.status-ended {
+    background: var(--status-ended-bg);
+    color: var(--status-ended-text);
+    border-color: var(--status-ended-border);
+}
+
+.status-ended::before {
+    background: var(--status-ended-border);
 }
 
 /* CONFIDENCE */

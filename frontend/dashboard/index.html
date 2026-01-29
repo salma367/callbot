@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Call Center Dashboard</title>
+  <title>Dashboard assistante Vocal</title>
 
   <!-- Fonts -->
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
@@ -24,9 +24,10 @@
     <!-- Header -->
     <header class="header">
       <div class="header-left">
-        <div class="header-icon">📞</div>
+        <div class="header-icon"><img src="justice.png" alt="Justice"
+            style="width:32px;height:32px;filter:brightness(0)invert(1);" /></div>
         <div class="header-text">
-          <h1 class="header-title">Call Center Dashboard</h1>
+          <h1 class="header-title">Dashboard Assistante Vocal</h1>
           <p class="header-subtitle">Historical call data & analytics</p>
         </div>
       </div>
@@ -51,13 +52,13 @@
     <section class="actions-row">
       <div class="actions">
         <button id="refresh-btn" class="action-btn primary">
-          🔄 Refresh Data
+          Refresh Data
         </button>
         <button id="export-btn" class="action-btn">
-          ⬇ Export CSV
+          Export CSV
         </button>
         <button id="summary-btn" class="action-btn">
-          📄 Generate Summary
+          Generate Summary
         </button>
       </div>
       <div class="table-info">
@@ -75,14 +76,11 @@
             <th>Phone</th>
             <th class="sortable">Agent</th>
             <th class="sortable">Status</th>
-            <th class="sortable">Confidence</th>
-            <th>Clarifications</th>
             <th>Decision</th>
             <th class="sortable">Time</th>
           </tr>
         </thead>
         <tbody>
-          <!-- JavaScript will populate table rows -->
         </tbody>
       </table>
     </section>

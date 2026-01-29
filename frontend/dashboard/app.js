@@ -6,11 +6,11 @@ const API_BASE_URL = 'http://127.0.0.1:5000/api/calls';
 
 // Icon mapping for KPI cards
 const kpiIcons = {
-    phone: '📞',
+    phone: '<img src="telephone.png" alt="Phone" style="width:24px;height:24px;" />',
     check: '✓',
     clock: '⏱',
     alert: '⚠',
-    chart: '📈'
+    chart: ''
 };
 
 // Global data storage
@@ -22,15 +22,13 @@ let currentData = [];
 // ============================================
 
 function convertToCSV(data) {
-    const headers = ['Call ID', 'Client', 'Phone', 'Agent', 'Status', 'Confidence', 'Clarifications', 'Summary', 'Start Time', 'End Time'];
+    const headers = ['Call ID', 'Client', 'Phone', 'Agent', 'Status', 'Clarifications', 'Summary', 'Start Time', 'End Time'];
     const rows = data.map(call => [
         call.call_id || '',
         call.user_name || '',
         call.phone_number || '',
         call.agent_name || '',
         call.status || '',
-        call.confidence || 0,
-        call.clarification_count || 0,
         call.summary || '',
         call.start_time || '',
         call.end_time || ''
@@ -56,11 +54,10 @@ function downloadCSV(csv, filename) {
 
 function generateSummary() {
     const total = currentData.length;
-    const solved = currentData.filter(c => c.status && c.status.toLowerCase() === 'solved').length;
-    const active = currentData.filter(c => c.status && c.status.toLowerCase() === 'active').length;
+    const resolved = currentData.filter(c => c.status && c.status.toLowerCase() === 'resolved').length;
+    const ended = currentData.filter(c => c.status && c.status.toLowerCase() === 'ended').length;
     const escalated = currentData.filter(c => c.status && c.status.toLowerCase() === 'escalated').length;
-    const avgConf = total ? Math.round(currentData.reduce((sum, c) => sum + (c.confidence || 0), 0) / total) : 0;
-    const resolutionRate = total ? Math.round((solved / total) * 100) : 0;
+    const resolutionRate = total ? Math.round((resolved / total) * 100) : 0;
 
     const summary = `
 CALL CENTER SUMMARY REPORT
@@ -68,10 +65,9 @@ CALL CENTER SUMMARY REPORT
 
 📊 Overview
 ├─ Total Calls: ${total}
-├─ Solved: ${solved} (${resolutionRate}%)
-├─ Active: ${active}
+├─ Resolved: ${resolved} (${resolutionRate}%)
+├─ Ended: ${ended}
 ├─ Escalated: ${escalated}
-└─ Avg Confidence: ${avgConf}%
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -86,18 +82,14 @@ function showError(message) {
     const tbody = document.querySelector('#calls-table tbody');
     tbody.innerHTML = `
         <tr>
-            <td colspan="9" style="text-align: center; padding: 40px; color: var(--text-muted);">
-                ⚠️ ${message}
+            <td colspan="7" style="text-align: center; padding: 40px; color: var(--text-muted);">
+                ${message}
             </td>
         </tr>
     `;
 }
 
-function getConfidenceClass(confidence) {
-    if (confidence >= 80) return 'conf-high';
-    if (confidence >= 60) return 'conf-medium';
-    return 'conf-low';
-}
+
 
 function formatTime(startTime, endTime) {
     if (!startTime) return { date: 'N/A', timeRange: 'N/A' };
@@ -192,11 +184,12 @@ function renderKPIs(calls) {
     const kpiRow = document.getElementById('kpi-row');
 
     const total = calls.length;
-    const solved = calls.filter(c => c.status && c.status.toLowerCase() === 'solved').length;
-    const active = calls.filter(c => c.status && c.status.toLowerCase() === 'active').length;
+    const resolved = calls.filter(c => c.status && c.status.toLowerCase() === 'resolved').length;
+    const ended = calls.filter(c => c.status && c.status.toLowerCase() === 'ended').length;
     const escalated = calls.filter(c => c.status && c.status.toLowerCase() === 'escalated').length;
-    const avgConf = total ? Math.round(calls.reduce((sum, c) => sum + (c.confidence || 0), 0) / total) : 0;
-    const resolutionRate = total ? Math.round((solved / total) * 100) : 0;
+    const resolutionRate = (resolved + escalated)
+        ? Math.round((resolved / (resolved + escalated)) * 100)
+        : 0;
 
     const kpiCards = [
         {
@@ -205,25 +198,20 @@ function renderKPIs(calls) {
             icon: kpiIcons.phone
         },
         {
-            label: 'SOLVED',
-            number: solved,
+            label: 'RESOLVED',
+            number: resolved,
             subtext: `${resolutionRate}% resolution`,
             icon: kpiIcons.check
         },
         {
-            label: 'ACTIVE',
-            number: active,
+            label: 'ENDED',
+            number: ended,
             icon: kpiIcons.clock
         },
         {
             label: 'ESCALATED',
             number: escalated,
             icon: kpiIcons.alert
-        },
-        {
-            label: 'AVG CONFIDENCE',
-            number: `${avgConf}%`,
-            icon: kpiIcons.chart
         }
     ];
 
@@ -251,7 +239,7 @@ function renderTable(calls) {
     if (calls.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="9" style="text-align: center; padding: 40px; color: var(--text-muted);">
+                <td colspan="7" style="text-align: center; padding: 40px; color: var(--text-muted);">
                     No calls found matching your search criteria.
                 </td>
             </tr>
@@ -263,7 +251,6 @@ function renderTable(calls) {
 
     tbody.innerHTML = calls.map(call => {
         const statusClass = call.status ? call.status.toLowerCase() : 'pending';
-        const confidence = call.confidence || 0;
         const { date, timeRange } = formatTime(call.start_time, call.end_time);
 
         // Extract agent role from agent_name if it contains a hyphen or dash
@@ -298,18 +285,7 @@ function renderTable(calls) {
                     <span class="status-pill status-${statusClass}">
                         ${call.status || 'pending'}
                     </span>
-                </td>
-                <td>
-                    <div class="conf-wrapper">
-                        <div class="conf-bar">
-                            <div class="conf-bar-fill ${getConfidenceClass(confidence)}" 
-                                 style="width: ${confidence}%">
-                            </div>
-                        </div>
-                        <div class="conf-text">${confidence}%</div>
-                    </div>
-                </td>
-                <td><span class="cell-clarifications">${call.clarification_count || 0}</span></td>
+                </td>                
                 <td><span class="cell-decision">${call.summary || 'No summary'}</span></td>
                 <td>
                     <div class="cell-time">${date}<br>${timeRange}</div>

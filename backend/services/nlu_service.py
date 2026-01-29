@@ -8,10 +8,6 @@ load_dotenv()
 
 
 class NLUService:
-    """
-    NLU Service responsible ONLY for intent detection.
-    Confidence is derived deterministically (no hallucinated scores).
-    """
 
     INTENT_CONFIDENCE_MAP = {
         "GREETING": 0.9,

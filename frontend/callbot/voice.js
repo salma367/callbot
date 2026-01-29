@@ -193,7 +193,7 @@ function startCall() {
             if (msg.decision === "AGENT" && msg.agent) {
                 stopAudio = true; // Prevent further recording/playback
 
-                const ttsMessage = "Votre demande est trop complexe. Vous allez être transféré à un agent humain.";
+                const ttsMessage = "Votre demande nécessite l'intervention d'un agent humain. Vous allez être transféré maintenant.";
 
                 if (msg.audio_response) {
                     // If backend sent TTS audio, play it

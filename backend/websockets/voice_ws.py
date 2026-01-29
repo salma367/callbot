@@ -177,8 +177,7 @@ async def voice_ws_endpoint(
                 print("[WS] Escalation detected -> ending call")
                 session.end_call(status="ESCALATED")
                 finalize_call(session)
-                await asyncio.sleep(0.1)
-                continue
+                break
 
             # --- Send AI audio ---
             ai_text = (

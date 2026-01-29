@@ -21,7 +21,9 @@ def init_db():
             status TEXT,
             start_time TEXT,
             end_time TEXT,
-            summary TEXT
+            summary TEXT,
+            confidence REAL,
+            clarification_count INTEGER
         )
         """
     )
@@ -50,9 +52,9 @@ def save_call_report(report):
         """
         INSERT OR REPLACE INTO call_reports (
             call_id, client_id, user_name, phone_number, agent_name, status,
-            start_time, end_time, summary
+            start_time, end_time, summary, confidence, clarification_count
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             getattr(report, "call_id", "Unknown"),
@@ -64,6 +66,12 @@ def save_call_report(report):
             getattr(report, "start_time", datetime.now()).isoformat(),
             getattr(report, "end_time", datetime.now()).isoformat(),
             getattr(report, "summary_text", ""),
+            (
+                float(getattr(report, "confidence", 0.0))
+                if getattr(report, "confidence", None) is not None
+                else 0.0
+            ),
+            int(getattr(report, "clarification_count", 0)),
         ),
     )
 
@@ -77,12 +85,19 @@ class CallReport:
         self.client_id = call_session.client_id
         self.user_name = getattr(call_session, "user_name", "UNKNOWN")
         self.phone_number = getattr(call_session, "phone_number", "UNKNOWN")
-        self.agent_name = getattr(call_session, "agent_name", "Unknown")
+        self.agent_name = getattr(call_session, "agent_name", "Sarah")
         self.status = getattr(call_session, "status", "UNKNOWN")
         self.start_time = getattr(call_session, "start_time", datetime.now())
         self.end_time = getattr(call_session, "end_time", datetime.now())
         self.messages = getattr(call_session, "messages", [])
         self.summary_text = None
+        # Extract confidence and clarification_count from the call session
+        self.confidence = (
+            getattr(call_session, "global_confidence", None)
+            or getattr(call_session, "confidence", None)
+            or 0.0
+        )
+        self.clarification_count = getattr(call_session, "clarification_count", 0)
 
     def generate_summary(self, llm_service=None):
         if llm_service:
