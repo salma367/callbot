@@ -7,7 +7,6 @@ from backend.services.voice_pipeline import VoicePipeline
 from backend.services.session_manager import SessionManager
 from backend.models.call_session import CallSession
 from backend.models.intent import Intent
-from backend.models.call_report import CallReport
 from backend.controllers.orchestrator import Orchestrator
 from backend.services.llm_service import LLMService
 from backend.controllers.callbot_controller import finalize_call
@@ -17,14 +16,17 @@ orchestrator = Orchestrator(llm_service=llm_service)
 
 
 class VoiceWSState:
-    """Per-connection WebSocket state."""
+    """Per-connection WebSocket state with thread-safe locking."""
 
     def __init__(self, session_id: str):
         self.session_id = session_id
-        self.is_ai_speaking = True
+        self.is_ai_speaking = False
+        self.speaking_lock = asyncio.Lock()  # Prevent race conditions
+        self.pending_user_audio = []  # Queue for audio received during AI speech
 
 
 async def send_mp3(ws: WebSocket, mp3_path: str):
+    """Send MP3 file over WebSocket."""
     if not mp3_path or not os.path.exists(mp3_path):
         print(f"[AUDIO][WARN] MP3 not found: {mp3_path}")
         return
@@ -38,15 +40,78 @@ async def send_mp3(ws: WebSocket, mp3_path: str):
 async def ai_speak(
     ws: WebSocket, state: VoiceWSState, text: str, pipeline: VoicePipeline
 ):
-    state.is_ai_speaking = True
+    """
+    AI speech with proper locking to prevent race conditions.
+    """
+    async with state.speaking_lock:  # Acquire lock
+        state.is_ai_speaking = True
+
+        try:
+            # Signal AI is about to speak (client can show visual indicator)
+            await ws.send_json({"event": "ai_speaking", "text": text})
+
+            # Generate TTS (this can be slow)
+            mp3_path = pipeline.tts.synthesize(text=text, lang="fr")
+
+            # Send audio
+            await send_mp3(ws, mp3_path)
+
+            # Only set to False AFTER audio is fully sent
+            state.is_ai_speaking = False
+            await ws.send_json({"event": "ai_done"})
+
+        except Exception as e:
+            print(f"[TTS][ERROR] {e}")
+            state.is_ai_speaking = False
+
+
+async def process_user_audio(
+    audio_bytes: bytes,
+    session: CallSession,
+    pipeline: VoicePipeline,
+    temp_dir: str,
+) -> dict:
+    """
+    Process user audio in isolated async function.
+    Returns processing result or error dict.
+    """
+    os.makedirs(temp_dir, exist_ok=True)
+    tmp_path = os.path.join(
+        temp_dir, f"{session.call_id}_{asyncio.get_event_loop().time()}.webm"
+    )
+
     try:
-        mp3_path = pipeline.tts.synthesize(text=text, lang="fr")
-        await send_mp3(ws, mp3_path)
+        # Save audio
+        with open(tmp_path, "wb") as f:
+            f.write(audio_bytes)
+
+        # Normalize
+        normalized_path = os.path.join(
+            temp_dir, f"{session.call_id}_{asyncio.get_event_loop().time()}_16k.wav"
+        )
+        normalize_for_asr(tmp_path, normalized_path)
+
+        # Check silence
+        if is_silent_wav(normalized_path):
+            return {"error": "silent_audio"}
+
+        # Process with pipeline
+        result = await asyncio.to_thread(
+            pipeline.process_audio, normalized_path, session
+        )
+
+        # Cleanup temp files
+        try:
+            os.remove(tmp_path)
+            os.remove(normalized_path)
+        except:
+            pass
+
+        return result
+
     except Exception as e:
-        print(f"[TTS][ERROR] {e}")
-    finally:
-        state.is_ai_speaking = False
-        await ws.send_json({"event": "ai_done"})
+        print(f"[AUDIO][ERROR] Processing failed: {e}")
+        return {"error": "processing_failed"}
 
 
 async def voice_ws_endpoint(
@@ -64,7 +129,11 @@ async def voice_ws_endpoint(
     # --- Wait for client registration ---
     while session is None:
         try:
-            message = await ws.receive()
+            message = await asyncio.wait_for(ws.receive(), timeout=30.0)
+        except asyncio.TimeoutError:
+            print("[WS] Registration timeout")
+            await ws.close()
+            return
         except WebSocketDisconnect:
             print("[WS] Client disconnected before registration")
             return
@@ -79,7 +148,6 @@ async def voice_ws_endpoint(
                 user_name = payload.get("user_name", "FrontEnd User")
                 phone_number = payload.get("phone_number", "000000000")
 
-                # --- Create call session (SessionManager handles client_id internally) ---
                 session = session_manager.create(
                     user_name=user_name,
                     phone_number=phone_number,
@@ -101,7 +169,7 @@ async def voice_ws_endpoint(
                 print(f"[WS] Client disconnected | call_id={session.call_id}")
                 break
             except RuntimeError as e:
-                if "disconnect" in str(e):
+                if "disconnect" in str(e).lower():
                     print(f"[WS] Runtime disconnect | call_id={session.call_id}")
                     break
                 raise
@@ -120,30 +188,31 @@ async def voice_ws_endpoint(
                     break
                 continue
 
-            # --- Binary audio ---
-            if "bytes" not in message or state.is_ai_speaking:
+            # --- Binary audio handling ---
+            if "bytes" not in message:
+                continue
+
+            if state.is_ai_speaking:
+                print("[WS] Dropping audio - AI is speaking")
+                # Optionally: queue for later processing
+                # state.pending_user_audio.append(message["bytes"])
                 continue
 
             audio_bytes = message["bytes"]
-            os.makedirs(temp_dir, exist_ok=True)
-            tmp_path = os.path.join(temp_dir, f"{session.call_id}.webm")
-            with open(tmp_path, "wb") as f:
-                f.write(audio_bytes)
 
-            normalized_path = os.path.join(temp_dir, f"{session.call_id}_16k.wav")
-            normalize_for_asr(tmp_path, normalized_path)
+            # Process audio asynchronously (non-blocking)
+            result = await process_user_audio(audio_bytes, session, pipeline, temp_dir)
 
-            if is_silent_wav(normalized_path):
+            if result.get("error") == "silent_audio":
                 continue
 
-            # --- Process audio ---
-            result = pipeline.process_audio(normalized_path)
             if "error" in result:
                 fallback = "Désolé, je n'ai pas compris. Pouvez-vous répéter ?"
-                await ai_speak(ws, state, fallback, pipeline)
                 session.add_message(fallback)
+                await ai_speak(ws, state, fallback, pipeline)
                 continue
 
+            # --- Extract results ---
             user_text = result.get("text", "")
             session.add_message(user_text)
             asr_conf = result.get("asr_confidence", 0.8)
@@ -155,6 +224,7 @@ async def voice_ws_endpoint(
             elif intent_obj is None:
                 intent_obj = Intent(name="UNKNOWN", confidence=0.2)
 
+            # --- Orchestrator decision ---
             turn_result = orchestrator.process_turn(
                 call_session=session,
                 intent=intent_obj,
@@ -179,12 +249,13 @@ async def voice_ws_endpoint(
                 finalize_call(session)
                 break
 
-            # --- Send AI audio ---
+            # --- Send AI response ---
             ai_text = (
                 turn_result.get("message")
                 or turn_result.get("response")
                 or result.get("response_text")
             )
+
             if ai_text:
                 await ai_speak(ws, state, ai_text, pipeline)
 

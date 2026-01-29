@@ -84,8 +84,17 @@ function playAIAudio(mp3Bytes, callback = null) {
 }
 
 // ---------- Recording ----------
+let isAISpeaking = false;
+
+function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state === "recording") {
+        mediaRecorder.stop();
+    }
+    isRecording = false;
+}
+
 async function startRecording() {
-    if (isRecording || !isCallActive || stopAudio || !ws || ws.readyState !== WebSocket.OPEN) return;
+    if (isRecording || !isCallActive || stopAudio || !ws || ws.readyState !== WebSocket.OPEN || isAISpeaking) return;
 
     try {
         if (stream) stream.getTracks().forEach(track => track.stop());
@@ -99,7 +108,7 @@ async function startRecording() {
         };
 
         mediaRecorder.onstop = () => {
-            if (audioChunks.length > 0 && ws && isCallActive && !stopAudio) {
+            if (audioChunks.length > 0 && ws && isCallActive && !stopAudio && !isAISpeaking) {
                 const blob = new Blob(audioChunks, { type: "audio/webm" });
                 ws.send(blob);
             }
@@ -211,8 +220,17 @@ function startCall() {
                 return;
             }
 
+            // ---------- Handle AI speaking ----------
+            if (msg.event === "ai_speaking") {
+                console.log("[DEBUG] AI is speaking, stopping recording");
+                isAISpeaking = true;
+                stopRecording();
+                return;
+            }
+
             // ---------- Handle AI turn done ----------
             if (msg.event === "ai_done") {
+                isAISpeaking = false;
                 if (msg.decision) decisionText.textContent = `Decision: ${msg.decision}`;
                 if (msg.confidence !== undefined) confidenceText.textContent = `Confidence: ${msg.confidence}`;
                 if (msg.clarification_count !== undefined) {

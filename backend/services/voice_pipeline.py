@@ -1,11 +1,11 @@
-# backend/services/voice_pipeline.py
-
 from backend.services.asr_service import ASRService
 from backend.services.nlu_service import NLUService
 from backend.services.llm_service import LLMService
 from backend.services.rag_service import RAGService
 from backend.services.tts_service import TTSService
 from backend.controllers.orchestrator import Orchestrator
+from concurrent.futures import ThreadPoolExecutor
+import time
 
 
 class VoicePipeline:
@@ -20,43 +20,39 @@ class VoicePipeline:
         self.llm_service = LLMService()
         self.orchestrator = Orchestrator(llm_service=self.llm_service)
 
+        # Thread pool for parallel operations
+        self.executor = ThreadPoolExecutor(max_workers=3)
+
     def process_audio(self, audio_path: str, call_session=None) -> dict:
-        """Process audio → text → intent → response (NO TTS here)."""
+        """Process audio → text → intent → response (optimized with parallelization)."""
+        start_time = time.time()
 
-        print(f"[DEBUG] Processing audio: {audio_path}")
-
-        # 1️⃣ ASR
+        # 1️⃣ ASR (must be first, sequential)
         asr_result = self.asr.transcribe_voice(audio_path)
         text = asr_result.get("text", "").strip()
         language = asr_result.get("language", "unknown")
         asr_conf = asr_result.get("confidence", 0.0)
 
-        print(
-            f"[DEBUG] ASR output: '{text}' | "
-            f"Confidence: {asr_conf} | Language: {language}"
-        )
-
         if not text or asr_conf < self.MIN_CONFIDENCE:
-            print("[DEBUG] ASR failed or below MIN_CONFIDENCE")
             return {
                 "error": "asr_failed",
                 "language": language,
                 "confidence": asr_conf,
             }
 
-        # 2️⃣ NLU
-        detected_intent = self.nlu.detect_intent(text)
+        # 2️⃣ NLU + RAG in parallel (both depend only on text)
+        nlu_future = self.executor.submit(self.nlu.detect_intent, text)
+        rag_future = self.executor.submit(self.rag.retrieve, text, 4)
+
+        # Wait for both to complete
+        detected_intent = nlu_future.result()
+        contexts = rag_future.result()
+
         nlu_conf = detected_intent.confidence if detected_intent else 0.0
         intent_name = detected_intent.name if detected_intent else "UNKNOWN"
-
-        print(f"[DEBUG] Detected intent: '{intent_name}' | Confidence: {nlu_conf}")
-
-        # 3️⃣ RAG
-        contexts = self.rag.retrieve(text, k=4)
         context = "\n".join(contexts) if contexts else ""
-        print(f"[DEBUG] RAG retrieved contexts: {contexts}")
 
-        # 4️⃣ LLM
+        # 3️⃣ LLM (depends on NLU + RAG results)
         try:
             response_text = self.llm.generate_response(
                 user_text=text,
@@ -66,11 +62,9 @@ class VoicePipeline:
             )
         except Exception as e:
             response_text = "Je suis désolé, je n'ai pas pu générer de réponse."
-            print(f"[DEBUG] LLM error: {e}")
+            print(f"[LLM ERROR] {e}")
 
-        print(f"[DEBUG] LLM response: '{response_text}'")
-
-        # 5️⃣ Orchestrator (optional, WS layer is source of truth)
+        # 4️⃣ Orchestrator (if call session provided)
         orchestration_result = None
         if call_session:
             orchestration_result = self.orchestrator.process_turn(
@@ -80,9 +74,11 @@ class VoicePipeline:
                 nlu_conf=nlu_conf,
                 ambiguous=False,
             )
-            print(f"[DEBUG] Orchestrator turn result: {orchestration_result}")
 
-        # 6️⃣ Return TEXT ONLY (WS decides if TTS happens)
+        elapsed = time.time() - start_time
+        print(f"[PERF] Total processing time: {elapsed:.2f}s")
+
+        # 5️⃣ Return results
         return {
             "text": text,
             "intent": intent_name,
@@ -91,4 +87,9 @@ class VoicePipeline:
             "response_text": response_text,
             "language": language,
             "orchestration_result": orchestration_result,
+            "processing_time": round(elapsed, 2),
         }
+
+    def __del__(self):
+        """Cleanup thread pool."""
+        self.executor.shutdown(wait=False)
