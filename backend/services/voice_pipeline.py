@@ -20,14 +20,12 @@ class VoicePipeline:
         self.llm_service = LLMService()
         self.orchestrator = Orchestrator(llm_service=self.llm_service)
 
-        # Thread pool for parallel operations
         self.executor = ThreadPoolExecutor(max_workers=3)
 
     def process_audio(self, audio_path: str, call_session=None) -> dict:
         """Process audio → text → intent → response (optimized with parallelization)."""
         start_time = time.time()
 
-        # 1️⃣ ASR (must be first, sequential)
         asr_result = self.asr.transcribe_voice(audio_path)
         text = asr_result.get("text", "").strip()
         language = asr_result.get("language", "unknown")
@@ -40,11 +38,9 @@ class VoicePipeline:
                 "confidence": asr_conf,
             }
 
-        # 2️⃣ NLU + RAG in parallel (both depend only on text)
         nlu_future = self.executor.submit(self.nlu.detect_intent, text)
         rag_future = self.executor.submit(self.rag.retrieve, text, 4)
 
-        # Wait for both to complete
         detected_intent = nlu_future.result()
         contexts = rag_future.result()
 
@@ -52,7 +48,6 @@ class VoicePipeline:
         intent_name = detected_intent.name if detected_intent else "UNKNOWN"
         context = "\n".join(contexts) if contexts else ""
 
-        # 3️⃣ LLM (depends on NLU + RAG results)
         try:
             response_text = self.llm.generate_response(
                 user_text=text,
@@ -64,7 +59,6 @@ class VoicePipeline:
             response_text = "Je suis désolé, je n'ai pas pu générer de réponse."
             print(f"[LLM ERROR] {e}")
 
-        # 4️⃣ Orchestrator (if call session provided)
         orchestration_result = None
         if call_session:
             orchestration_result = self.orchestrator.process_turn(
@@ -78,7 +72,6 @@ class VoicePipeline:
         elapsed = time.time() - start_time
         print(f"[PERF] Total processing time: {elapsed:.2f}s")
 
-        # 5️⃣ Return results
         return {
             "text": text,
             "intent": intent_name,

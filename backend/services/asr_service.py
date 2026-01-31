@@ -1,49 +1,38 @@
 from faster_whisper import WhisperModel
 import math
-import platform
+import torch
 
 
 class ASRService:
     def __init__(self, model_name="small"):
-        # Detect M1/M2 Mac for optimal settings
-        is_apple_silicon = (
-            platform.processor() == "arm" or "Apple" in platform.processor()
-        )
+        # Check if CUDA is available for GPU acceleration
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        compute_type = "float16" if device == "cuda" else "int8"
 
-        if is_apple_silicon:
-            device = "cpu"
-            compute_type = "int8"
-            num_workers = 4
-            print(f"[ASR] Apple Silicon detected - optimized settings")
-        else:
-            device = "cpu"
-            compute_type = "int8"
-            num_workers = 2
+        print(f"[ASR] Initializing Whisper on {device} with {compute_type}")
 
         self.model = WhisperModel(
             model_name,
             device=device,
             compute_type=compute_type,
-            num_workers=num_workers,
-            cpu_threads=8 if is_apple_silicon else 4,  # M1 Pro has 8-10 cores
+            num_workers=2,
+            cpu_threads=4,
         )
         self._last_confidence = 0.0
 
     def transcribe_voice(self, audio_path: str) -> dict:
-        """Optimized transcription."""
+        """Optimized transcription with faster settings."""
         segments, info = self.model.transcribe(
             audio_path,
-            beam_size=2,
-            best_of=2,
+            beam_size=3,
+            best_of=3,
             temperature=0.0,
             vad_filter=True,
             vad_parameters=dict(
-                min_silence_duration_ms=1000,
+                min_silence_duration_ms=1500,
                 threshold=0.5,
             ),
             word_timestamps=False,
-            condition_on_previous_text=False,
-            language="fr",
         )
 
         text_parts = []
@@ -55,6 +44,7 @@ class ASRService:
                 logprobs.append(segment.avg_logprob)
 
         text = " ".join(text_parts).strip()
+
         language = info.language if info and info.language else "fr"
 
         if logprobs:

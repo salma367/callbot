@@ -204,8 +204,11 @@ function startCall() {
 
                 const ttsMessage = "Votre demande nécessite l'intervention d'un agent humain. Vous allez être transféré maintenant.";
 
-                if (msg.audio_response) {
-                    // If backend sent TTS audio, play it
+                if (msg.audio_stream) {
+                    // Backend will stream binary audio; the binary handler will play it and call showEscalationScreen when finished.
+                    // Do nothing here; wait for binary audio to arrive.
+                } else if (msg.audio_response) {
+                    // If backend included audio bytes directly in JSON (rare), play them
                     playAIAudio(msg.audio_response, () => showEscalationScreen(msg));
                 } else {
                     // Otherwise, use browser SpeechSynthesis

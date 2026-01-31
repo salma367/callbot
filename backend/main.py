@@ -15,20 +15,13 @@ from backend.repositories.client_repo import get_or_create_client
 from backend.websockets.voice_ws import voice_ws_endpoint
 
 
-# ═══════════════════════════════════════════════════════════
-# LIFECYCLE MANAGEMENT
-# ═══════════════════════════════════════════════════════════
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle startup and shutdown events."""
-    # Startup
     print("[STARTUP] Initializing services...")
 
-    # Pre-warm models to avoid first-call latency
     try:
         print("[STARTUP] Warming up ASR...")
-        # Create dummy audio file if needed for warmup
-        # app.state.pipeline.asr.transcribe_voice("path/to/dummy.wav")
 
         print("[STARTUP] Warming up NLU...")
         app.state.pipeline.nlu.detect_intent("Bonjour")
@@ -42,9 +35,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown
     print("[SHUTDOWN] Cleaning up...")
-    # Cleanup temp files, close connections, etc.
     try:
         import shutil
 
@@ -54,9 +45,6 @@ async def lifespan(app: FastAPI):
         print(f"[SHUTDOWN] Cleanup error: {e}")
 
 
-# ═══════════════════════════════════════════════════════════
-# FASTAPI APP
-# ═══════════════════════════════════════════════════════════
 app = FastAPI(
     title="Callbot AI",
     description="AI-first voice callbot for insurance",
@@ -64,19 +52,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: Replace with specific origins in production
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
     allow_credentials=True,
 )
 
 
-# ═══════════════════════════════════════════════════════════
-# GLOBAL STATE (attached to app for cleaner access)
-# ═══════════════════════════════════════════════════════════
 app.state.pipeline = VoicePipeline()
 app.state.session_manager = SessionManager()
 app.state.llm_service = LLMService()
@@ -84,9 +68,6 @@ app.state.orchestrator = Orchestrator(llm_service=app.state.llm_service)
 app.state.active_calls = {}  # In-memory session store
 
 
-# ═══════════════════════════════════════════════════════════
-# REST API ROUTES
-# ═══════════════════════════════════════════════════════════
 router = APIRouter(prefix="/call", tags=["Call Management"])
 
 
@@ -100,21 +81,17 @@ def start_call(
     Returns call_id and client_id.
     """
     try:
-        # Validate and get/create client
         client_id = get_or_create_client(full_name=user_name, phone_number=phone_number)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Create session
     call_session = app.state.session_manager.create(
         user_name=user_name,
         phone_number=phone_number,
     )
 
-    # Initialize orchestrator
     app.state.orchestrator.on_call_started(call_session)
 
-    # Store in active calls
     app.state.active_calls[call_session.call_id] = call_session
 
     return {
@@ -135,13 +112,12 @@ def process_call(request: CallProcessRequest):
     if not call_session:
         raise HTTPException(status_code=404, detail="Call session not found")
 
-    # Mock confidences (in real scenario, these come from ASR/NLU)
     asr_conf = 0.9
     nlu_conf = 0.8
 
     response = app.state.orchestrator.process_turn(
         call_session=call_session,
-        intent=None,  # TODO: Replace with actual Intent object
+        intent=None,
         asr_conf=asr_conf,
         nlu_conf=nlu_conf,
     )
@@ -161,10 +137,8 @@ def end_call(call_id: str = Query(..., description="Call session ID")):
     if not call_session:
         raise HTTPException(status_code=404, detail="Call session not found")
 
-    # End session
     call_session.end_call(status="COMPLETED")
 
-    # Compute average confidence
     avg_conf = (
         call_session.get_average_confidence()
         if hasattr(call_session, "get_average_confidence")
@@ -172,7 +146,6 @@ def end_call(call_id: str = Query(..., description="Call session ID")):
     )
     call_session.average_confidence = avg_conf
 
-    # Generate report
     report = CallReport(call_session)
     report.final_decision = getattr(call_session, "final_decision", "UNKNOWN")
     report.average_confidence = avg_conf
@@ -183,7 +156,6 @@ def end_call(call_id: str = Query(..., description="Call session ID")):
         print(f"[REPORT] Summary generation failed: {e}")
         summary = "Summary generation failed."
 
-    # Remove from active calls
     app.state.active_calls.pop(call_id, None)
 
     return {
@@ -204,13 +176,9 @@ def list_active_calls():
     }
 
 
-# Include router
 app.include_router(router)
 
 
-# ═══════════════════════════════════════════════════════════
-# WEBSOCKET ENDPOINT (primary interface)
-# ═══════════════════════════════════════════════════════════
 @app.websocket("/ws/voice")
 async def websocket_endpoint(ws: WebSocket):
     """Real-time voice interaction via WebSocket."""
@@ -222,9 +190,6 @@ async def websocket_endpoint(ws: WebSocket):
     )
 
 
-# ═══════════════════════════════════════════════════════════
-# HEALTH CHECK
-# ═══════════════════════════════════════════════════════════
 @app.get("/health")
 def health_check():
     """Service health check endpoint."""
@@ -240,9 +205,6 @@ def health_check():
     }
 
 
-# ═══════════════════════════════════════════════════════════
-# START SERVER
-# ═══════════════════════════════════════════════════════════
 if __name__ == "__main__":
     print(
         """

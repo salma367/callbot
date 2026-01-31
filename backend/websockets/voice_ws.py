@@ -38,10 +38,17 @@ async def send_mp3(ws: WebSocket, mp3_path: str):
 
 
 async def ai_speak(
-    ws: WebSocket, state: VoiceWSState, text: str, pipeline: VoicePipeline
+    ws: WebSocket,
+    state: VoiceWSState,
+    text: str,
+    pipeline: VoicePipeline,
+    mp3_path: str = None,
 ):
     """
     AI speech with proper locking to prevent race conditions.
+
+    If `mp3_path` is provided and the file exists, the handler will stream that file
+    directly to the client. Otherwise it will synthesize audio with the pipeline TTS.
     """
     async with state.speaking_lock:  # Acquire lock
         state.is_ai_speaking = True
@@ -50,11 +57,13 @@ async def ai_speak(
             # Signal AI is about to speak (client can show visual indicator)
             await ws.send_json({"event": "ai_speaking", "text": text})
 
-            # Generate TTS (this can be slow)
-            mp3_path = pipeline.tts.synthesize(text=text, lang="fr")
-
-            # Send audio
-            await send_mp3(ws, mp3_path)
+            # If caller provided a pre-generated MP3 path, use it
+            if mp3_path and os.path.exists(mp3_path):
+                await send_mp3(ws, mp3_path)
+            else:
+                # Generate TTS (this can be slow)
+                mp3_path_generated = pipeline.tts.synthesize(text=text, lang="fr")
+                await send_mp3(ws, mp3_path_generated)
 
             # Only set to False AFTER audio is fully sent
             state.is_ai_speaking = False
@@ -158,10 +167,12 @@ async def voice_ws_endpoint(
 
     try:
         # --- Initial greeting ---
-        greeting = "Bonjour ! Je suis votre assistant vocal pour l'assurance."
-        await ai_speak(ws, state, greeting, pipeline)
-        session.add_message(greeting)
-
+        greeting = "Bonjour ! Je suis Selene, votre assistant vocal pour l'assurance."
+        greeting_mp3 = os.path.join("demo", "tts_outputs", "greeting.mp3")
+        if os.path.exists(greeting_mp3):
+            await ai_speak(ws, state, greeting, pipeline, mp3_path=greeting_mp3)
+        else:
+            await ai_speak(ws, state, greeting, pipeline)
         while True:
             try:
                 message = await ws.receive()
@@ -233,6 +244,10 @@ async def voice_ws_endpoint(
                 ambiguous=False,
             )
             turn_result["call_id"] = session.call_id
+            # Indicate if we're going to stream a pre-generated audio for escalation
+            transfer_mp3 = os.path.join("demo", "tts_outputs", "transfer_agent.mp3")
+            if turn_result.get("decision") == "AGENT" and os.path.exists(transfer_mp3):
+                turn_result["audio_stream"] = True
             await ws.send_json(turn_result)
 
             # 🔚 Call end handling (GOODBYE)
@@ -244,7 +259,24 @@ async def voice_ws_endpoint(
 
             # --- Escalation handling ---
             if turn_result.get("decision") == "AGENT":
-                print("[WS] Escalation detected -> ending call")
+                print(
+                    "[WS] Escalation detected -> sending transfer audio (if available) and ending call"
+                )
+                transfer_mp3 = os.path.join("demo", "tts_outputs", "transfer_agent.mp3")
+                if os.path.exists(transfer_mp3):
+                    transfer_text = (
+                        turn_result.get("message") or "Transferring to agent"
+                    )
+                    await ai_speak(
+                        ws, state, transfer_text, pipeline, mp3_path=transfer_mp3
+                    )
+                else:
+                    # fallback to synthesized or text-based TTS
+                    transfer_text = (
+                        turn_result.get("message")
+                        or "Votre demande nécessite l'intervention d'un agent humain. Vous allez être transféré maintenant."
+                    )
+                    await ai_speak(ws, state, transfer_text, pipeline)
                 session.end_call(status="ESCALATED")
                 finalize_call(session)
                 break

@@ -13,7 +13,7 @@ class CallSession:
         self.phone_number = phone_number or "UNKNOWN"
         self.agent_id = agent_id
         self.messages = []
-        self.status = "ONGOING"  # ONGOING, ESCALATED, RESOLVED
+        self.status = "ONGOING"
         self.start_time = datetime.now()
         self.end_time = None
         self.clarification_count = 0

@@ -14,19 +14,15 @@ class RAGService:
     ):
         os.makedirs(persist_dir, exist_ok=True)
 
-        # 1️⃣ Initialize Persistent Chroma client
         self.client = chromadb.PersistentClient(
             path=persist_dir,
             settings=Settings(anonymized_telemetry=False),
         )
 
-        # 2️⃣ Get or create collection
         self.collection = self.client.get_or_create_collection(name=collection_name)
 
-        # 3️⃣ Load embedder
         self.embedder = SentenceTransformer(embedding_model)
 
-        # 4️⃣ Check collection status
         self.has_data = self.collection.count() > 0
 
     def check_collection_status(self) -> bool:
@@ -43,7 +39,6 @@ class RAGService:
             return []
 
         try:
-            # Encode query with normalization
             embedding = self.embedder.encode(
                 [query], normalize_embeddings=True
             ).tolist()
@@ -51,7 +46,7 @@ class RAGService:
             results = self.collection.query(
                 query_embeddings=embedding,
                 n_results=k,
-                include=["documents", "metadatas"],  # metadata optional
+                include=["documents", "metadatas"],
             )
 
             docs = results.get("documents", [[]])

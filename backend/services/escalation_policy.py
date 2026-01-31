@@ -14,7 +14,7 @@ class EscalationPolicy:
         confidence_limit: float = 0.3,
         sensitive_intents: list[str] = None,
         max_ambiguity: int = 3,
-        use_ai_validation: bool = True,  # Feature flag for AI validation
+        use_ai_validation: bool = True,
     ):
         self.confidence_limit = confidence_limit
         self.max_ambiguity = max_ambiguity
@@ -25,7 +25,7 @@ class EscalationPolicy:
             "CONTRACT_CANCELLATION",
         ]
 
-        # Explicit escalation phrases (high precision)
+        # escalation phrases
         self.explicit_agent_requests = [
             "je veux parler à un agent",
             "passez-moi un humain",
@@ -35,7 +35,7 @@ class EscalationPolicy:
             "parler à quelqu'un",
         ]
 
-        # Question patterns that indicate inquiry, not emergency
+        # inquiry not emergency
         self.question_patterns = [
             "est-ce qu'",
             "est-il possible",
@@ -51,19 +51,16 @@ class EscalationPolicy:
 
         # Critical keywords that need AI validation
         self.critical_keywords = [
-            # life-threatening (tier 1 - highest priority)
             "tué",
             "meurtre",
             "sang",
             "urgence vitale",
             "risque vital",
             "mourir",
-            # severe injury (tier 2)
             "blessé gravement",
             "accident grave",
             "brûlure grave",
             "explosion",
-            # violence/crime (tier 2)
             "agression",
             "kidnapping",
             "braquage",
@@ -71,7 +68,7 @@ class EscalationPolicy:
             "terrorisme",
         ]
 
-        # Lower-priority keywords (likely false positives without context)
+        # false positives without context
         self.context_dependent_keywords = [
             "blessé",
             "accident",
@@ -87,7 +84,6 @@ class EscalationPolicy:
             "menace",
         ]
 
-        # Initialize AI service if enabled
         if self.use_ai_validation:
             self.api_key = os.getenv("GROQ_API_KEY")
             if self.api_key:
@@ -98,7 +94,6 @@ class EscalationPolicy:
                 self.use_ai_validation = False
 
     def _is_question_context(self, text: str) -> bool:
-        """Quick check if message is a question (likely not an emergency)."""
         text_lower = text.lower().strip()
 
         # Check for question patterns at start
@@ -114,20 +109,15 @@ class EscalationPolicy:
         return False
 
     def _contains_explicit_agent_request(self, text: str) -> bool:
-        """Check for explicit agent escalation requests."""
         text_lower = text.lower().strip()
         return any(phrase in text_lower for phrase in self.explicit_agent_requests)
 
     @lru_cache(maxsize=500)
     def _analyze_severity_cached(self, text_hash: str, user_text: str) -> dict:
-        """Cached AI-based severity analysis to avoid redundant API calls."""
         return self._analyze_severity(user_text)
 
     def _analyze_severity(self, user_text: str) -> dict:
-        """
-        AI validation for ambiguous cases.
-        Returns: {"requires_escalation": bool, "reason": str, "confidence": float}
-        """
+
         if not self.use_ai_validation:
             return {
                 "requires_escalation": False,
@@ -221,10 +211,7 @@ CONFIDENCE: 0.0-1.0"""
         ambiguity_count: int = 0,
         user_text: str = "",
     ) -> tuple[str, str]:
-        """
-        Multi-tier escalation logic with AI validation.
-        Returns: (decision: str, reason: str)
-        """
+
         text_lower = user_text.lower().strip()
 
         # ═══════════════════════════════════════════════════════════
@@ -241,12 +228,9 @@ CONFIDENCE: 0.0-1.0"""
         )
 
         if has_critical_keyword:
-            # Skip AI if it's clearly a question
             if self._is_question_context(user_text):
-                # Question about critical topic, but not an emergency
-                pass  # Continue to standard logic
+                pass
             else:
-                # Use AI to validate if this is a real emergency
                 text_hash = hashlib.md5(user_text.encode()).hexdigest()
                 severity = self._analyze_severity_cached(text_hash, user_text)
 
@@ -254,14 +238,13 @@ CONFIDENCE: 0.0-1.0"""
                     return "ESCALATE", f"CRITICAL_SITUATION: {severity['reason']}"
 
         # ═══════════════════════════════════════════════════════════
-        # TIER 3: CONTEXT-DEPENDENT KEYWORDS (AI validation if not question)
+        # TIER 3: CONTEXT-DEPENDENT KEYWORDS
         # ═══════════════════════════════════════════════════════════
         has_context_keyword = any(
             word in text_lower for word in self.context_dependent_keywords
         )
 
         if has_context_keyword and not self._is_question_context(user_text):
-            # Might be serious, validate with AI
             text_hash = hashlib.md5(user_text.encode()).hexdigest()
             severity = self._analyze_severity_cached(text_hash, user_text)
 
@@ -281,7 +264,6 @@ CONFIDENCE: 0.0-1.0"""
         # TIER 5: SENSITIVE INTENTS (with AI validation)
         # ═══════════════════════════════════════════════════════════
         if intent_name.upper() in self.sensitive_intents:
-            # For sensitive intents, check if there's concerning content
             if has_critical_keyword or has_context_keyword:
                 if not self._is_question_context(user_text):
                     text_hash = hashlib.md5(user_text.encode()).hexdigest()

@@ -22,7 +22,6 @@ class NLUService:
         "UNKNOWN": 0.2,
     }
 
-    # Intent definitions for better classification
     INTENT_DEFINITIONS = {
         "GREETING": "Salutations initiales, bonjour, hello, débuter une conversation",
         "GOODBYE": "Fin de conversation, au revoir, merci et raccrocher",
@@ -34,7 +33,6 @@ class NLUService:
         "UNKNOWN": "Message non clair, hors contexte, ou incompréhensible",
     }
 
-    # Fast-path patterns for common intents (no API call needed)
     PATTERN_RULES = {
         "GREETING": [
             r"\b(bonjour|salut|bonsoir|hello|coucou|hey)\b",
@@ -70,19 +68,17 @@ class NLUService:
         """Fast-path: Check regex patterns before API call."""
         text_lower = text.lower().strip()
 
-        # Try each intent's patterns
         for intent_name, patterns in self.PATTERN_RULES.items():
             for pattern in patterns:
                 if re.search(pattern, text_lower, re.IGNORECASE):
                     confidence = self.INTENT_BASE_CONFIDENCE[intent_name]
                     return Intent(name=intent_name, confidence=confidence)
 
-        return None  # No pattern match, need API classification
+        return None
 
     @lru_cache(maxsize=1000)
     def _classify_with_llm(self, text: str) -> Intent:
         """LLM-based classification with caching."""
-        # Build intent descriptions for better accuracy
         intent_descriptions = "\n".join(
             [f"- {name}: {desc}" for name, desc in self.INTENT_DEFINITIONS.items()]
         )
@@ -132,7 +128,6 @@ REASONING: [one sentence why]"""
             data = response.json()
             content = data["choices"][0]["message"]["content"].strip()
 
-            # Parse response
             predicted_intent = "UNKNOWN"
             llm_confidence = 0.5
 
@@ -146,12 +141,10 @@ REASONING: [one sentence why]"""
                     except ValueError:
                         llm_confidence = 0.5
 
-            # Validate intent
             if predicted_intent not in self.intent_labels:
                 predicted_intent = "UNKNOWN"
                 llm_confidence = 0.2
 
-            # Blend LLM confidence with base confidence
             base_confidence = self.INTENT_BASE_CONFIDENCE[predicted_intent]
             final_confidence = (llm_confidence * 0.6) + (base_confidence * 0.4)
 
@@ -178,15 +171,12 @@ REASONING: [one sentence why]"""
         """
         text = text.strip()
 
-        # Handle empty input
         if not text:
             return Intent(name="UNKNOWN", confidence=0.2)
 
-        # Handle very short messages (likely noise)
         if len(text) < 3:
             return Intent(name="UNKNOWN", confidence=0.3)
 
-        # FAST PATH: Try pattern matching first
         pattern_result = self._check_pattern_rules(text)
         if pattern_result:
             print(
@@ -194,7 +184,6 @@ REASONING: [one sentence why]"""
             )
             return pattern_result
 
-        # SLOW PATH: Use LLM for ambiguous cases
         print(f"[NLU] LLM classification for: '{text[:50]}...'")
         return self._classify_with_llm(text)
 

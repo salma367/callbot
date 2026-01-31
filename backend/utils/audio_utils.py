@@ -28,10 +28,7 @@ def normalize_for_asr(input_path: str, output_path: str):
 
 
 def is_silent_wav(path: str, rms_threshold: int = 300) -> bool:
-    """
-    Returns True if audio energy is below threshold (silence).
-    Threshold ~200–500 is reasonable for 16-bit PCM.
-    """
+
     try:
         with wave.open(path, "rb") as wf:
             frames = wf.readframes(wf.getnframes())
@@ -40,4 +37,4 @@ def is_silent_wav(path: str, rms_threshold: int = 300) -> bool:
             return rms < rms_threshold
     except Exception as e:
         print(f"[AUDIO][ERROR] Silence check failed: {e}")
-        return True  # fail-safe: treat as silence
+        return True

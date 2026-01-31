@@ -7,7 +7,6 @@ load_dotenv()
 
 
 class LLMService:
-    # Intent-specific response templates for consistency
     INTENT_GUIDELINES = {
         "GREETING": "Réponse chaleureuse et professionnelle. Demandez comment vous pouvez aider.",
         "GOODBYE": "Remerciez le client et souhaitez une bonne journée.",
@@ -104,11 +103,9 @@ RÉPONSE (2-3 phrases max):"""
         """
         Generate contextual response with intent-aware behavior.
         """
-        # Normalize inputs
         context = context.strip() if context else ""
         intent = intent or "INQUIRY"
 
-        # Build prompts
         system_prompt = self._build_system_prompt()
         user_prompt = self._build_user_prompt(user_text, context, intent)
 
@@ -119,7 +116,7 @@ RÉPONSE (2-3 phrases max):"""
                 {"role": "user", "content": user_prompt},
             ],
             "max_tokens": 150,
-            "temperature": 0.3,  # Slightly higher for natural responses
+            "temperature": 0.3,
             "top_p": 0.9,
         }
 
@@ -146,10 +143,8 @@ RÉPONSE (2-3 phrases max):"""
             print(f"[LLM] Unexpected error: {e}")
             return self._get_fallback_response(intent)
 
-        # Post-process response
         text = self._clean_response(text)
 
-        # Only validate for REALLY dangerous advice (relaxed from before)
         if self._contains_dangerous_advice(text):
             print(f"[LLM] Blocked dangerous advice: {text}")
             return "Pour cette question spécifique, un agent pourra mieux vous aider."
@@ -158,10 +153,8 @@ RÉPONSE (2-3 phrases max):"""
 
     def _clean_response(self, text: str) -> str:
         """Clean and limit response length."""
-        # Remove markdown
         text = text.replace("**", "").replace("*", "").strip()
 
-        # Remove common prefixes that make it sound robotic
         prefixes_to_remove = [
             "En tant qu'assistant IA, ",
             "Je suis désolé, mais ",
@@ -171,7 +164,6 @@ RÉPONSE (2-3 phrases max):"""
             if text.startswith(prefix):
                 text = text[len(prefix) :]
 
-        # Limit to 3 sentences max
         sentences = []
         for sentence in text.split("."):
             sentence = sentence.strip()
@@ -192,15 +184,14 @@ RÉPONSE (2-3 phrases max):"""
         """
         text_lower = text.lower()
 
-        # Only block if giving SPECIFIC medical/legal/financial advice
         dangerous_phrases = [
-            "vous devriez prendre ce médicament",  # Specific medical advice
-            "je vous garantis que",  # Making guarantees
-            "votre contrat couvre exactement",  # Specific coverage claims
-            "le montant sera de",  # Specific amounts
-            "vous êtes légalement obligé",  # Legal obligations
-            "je peux approuver",  # Approving claims
-            "je vais modifier votre",  # Modifying contracts
+            "vous devriez prendre ce médicament",
+            "je vous garantis que",
+            "votre contrat couvre exactement",
+            "le montant sera de",
+            "vous êtes légalement obligé",
+            "je peux approuver",
+            "je vais modifier votre",
         ]
 
         return any(phrase in text_lower for phrase in dangerous_phrases)
